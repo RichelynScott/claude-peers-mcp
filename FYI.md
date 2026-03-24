@@ -1,5 +1,12 @@
 # FYI - claude-peers-mcp Decision Journal
 
+## 2026-03-24 - Deep Research: LAN Discovery Prerequisites
+### What: Iterative recursive deep research (breadth 4, depth 2) on Bun TLS, WSL2 mDNS, bonjour-service compatibility, self-signed cert generation, and federated broker patterns
+### Why: PRD `tasks/prd-lan-discovery.md` explicitly requires deep research before implementation. Key unknowns: Can Bun serve TLS? Will mDNS work on WSL2? Can Bun generate self-signed certs?
+### How: 4 parallel Firecrawl searches + 2 DeepWiki codebase analyses (oven-sh/bun) + 3 targeted scrapes + Microsoft WSL docs. 16 unique sources consulted. Key findings: (1) `Bun.serve()` TLS fully sufficient — `tls: { key, cert }` with `Bun.file()`, (2) No built-in cert gen — must shell out to `openssl req -newkey rsa:2048 -noenc ...`, (3) Bun `dgram` fully supports multicast (`addMembership`, `setBroadcast`, `setMulticastTTL`) so `bonjour-service` should work, (4) WSL2 NAT mode blocks multicast entirely, mirrored mode officially supports it but has known bugs (packets visible on Wireshark but not delivered), (5) `dnsTunneling=false` required for .local name resolution in WSL2.
+### Impact: **Phase A (manual federation) is confirmed feasible and low-risk.** Phase B (mDNS) is medium-risk on WSL2 — design for graceful degradation. Full report at `.firecrawl/deep-research-lan-discovery.md` (296 lines).
+### Related: `9007d28`
+
 ## 2026-03-24 - Full backlog implementation (Phases 1-3)
 ### What: Implemented 4 major features from backlog PRDs + MCP server test suite, coordinated hook implementation via CPM
 ### Why: User requested full backlog execution using the Backlog-to-Ralph Pipeline pattern
