@@ -442,13 +442,12 @@ describe("Security & Limits", () => {
   });
 
   test("Rate limiting returns 429 after 60 requests", async () => {
-    // The rate limiter tracks per-IP. /health is exempt so we use /heartbeat.
-    // Fire enough requests to guarantee exceeding the 60/min limit.
-    // Previous tests have already consumed some of the budget.
+    // /health, /register, /heartbeat are exempt from rate limiting.
+    // Use /set-summary which IS rate-limited.
     let got429 = false;
     const promises: Promise<Response>[] = [];
     for (let i = 0; i < 120; i++) {
-      promises.push(post("/heartbeat", { id: peerId }));
+      promises.push(post("/set-summary", { id: peerId, summary: `test ${i}` }));
     }
 
     const results = await Promise.all(promises);

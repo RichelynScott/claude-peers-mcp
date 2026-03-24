@@ -301,9 +301,24 @@ Bun.serve({
     const url = new URL(req.url);
     const path = url.pathname;
 
-    // /health is exempt from rate limiting (any method)
+    // Critical endpoints exempt from rate limiting
     if (path === "/health") {
       return Response.json({ status: "ok", peers: (selectAllPeers.all() as Peer[]).length });
+    }
+    if (path === "/register" || path === "/heartbeat") {
+      // Registration and heartbeat must always work — rate limiting these
+      // causes cascading reconnection failures across all sessions
+      if (req.method === "POST") {
+        try {
+          const body = await req.json();
+          if (path === "/register") return Response.json(handleRegister(body as RegisterRequest));
+          handleHeartbeat(body as HeartbeatRequest);
+          return Response.json({ ok: true });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          return Response.json({ error: msg }, { status: 500 });
+        }
+      }
     }
 
     // Rate limiting: 60 requests per minute per IP
