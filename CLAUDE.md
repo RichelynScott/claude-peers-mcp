@@ -1,36 +1,44 @@
----
-description: Use Bun instead of Node.js, npm, pnpm, or vite.
-globs: "*.ts, *.tsx, *.html, *.css, *.js, *.jsx, package.json"
-alwaysApply: false
----
+# claude-peers-mcp
 
-# claude-peers
-
-Peer discovery and messaging MCP channel for Claude Code instances.
+Private fork of [louislva/claude-peers-mcp](https://github.com/louislva/claude-peers-mcp). Peer discovery and messaging MCP channel for Claude Code instances.
 
 ## Architecture
 
-- `broker.ts` — Singleton HTTP daemon on localhost:7899 + SQLite. Auto-launched by the MCP server.
+- `broker.ts` — Singleton HTTP daemon on localhost:7899 + SQLite (`~/.claude-peers.db`). Auto-launched by the MCP server.
 - `server.ts` — MCP stdio server, one per Claude Code instance. Connects to broker, exposes tools, pushes channel notifications.
 - `shared/types.ts` — Shared TypeScript types for broker API.
-- `shared/summarize.ts` — Auto-summary generation via gpt-5.4-nano.
+- `shared/summarize.ts` — Auto-summary generation via OpenAI gpt-5.4-nano (requires OPENAI_API_KEY, falls back gracefully).
 - `cli.ts` — CLI utility for inspecting broker state.
+
+## MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `list_peers(scope)` | Discover peers. Scope: machine/directory/repo |
+| `send_message(to_id, text)` | Send message to peer by ID |
+| `set_name(name)` | Set session name (from /rename) |
+| `set_summary(summary)` | Set work summary visible to peers |
+| `check_messages()` | Manual message poll (fallback — channel push is primary) |
 
 ## Running
 
 ```bash
-# Start Claude Code with the channel:
-claude --dangerously-load-development-channels server:claude-peers
-
-# Or just add to .mcp.json and use as regular MCP (no channel push, but tools work):
-# { "claude-peers": { "command": "bun", "args": ["./server.ts"] } }
+# ZSH wrapper auto-includes --dangerously-load-development-channels flag.
+# Just run claude normally — channel push is automatic.
+claude
 
 # CLI:
-bun cli.ts status
-bun cli.ts peers
-bun cli.ts send <peer-id> <message>
-bun cli.ts kill-broker
+bun cli.ts status          # broker status + all peers
+bun cli.ts peers           # list peers
+bun cli.ts send <id> <msg> # send message
+bun cli.ts kill-broker     # stop broker daemon
 ```
+
+## Observability
+
+- **stderr**: Full messages logged to MCP server stderr (visible in Claude Code MCP logs)
+- **Log file**: `~/.claude-peers-messages.log` — both sent and received. Monitor with `tail -f`
+- **CLI**: `bun cli.ts status` shows registered peers with [SESSION_NAME] tags
 
 ## Bun
 
@@ -38,104 +46,42 @@ Default to using Bun instead of Node.js.
 
 - Use `bun <file>` instead of `node <file>` or `ts-node <file>`
 - Use `bun test` instead of `jest` or `vitest`
-- Use `bun build <file.html|file.ts|file.css>` instead of `webpack` or `esbuild`
-- Use `bun install` instead of `npm install` or `yarn install` or `pnpm install`
-- Use `bun run <script>` instead of `npm run <script>` or `yarn run <script>` or `pnpm run <script>`
-- Use `bunx <package> <command>` instead of `npx <package> <command>`
+- Use `bun install` instead of `npm install`
+- Use `bunx <package>` instead of `npx <package>`
 - Bun automatically loads .env, so don't use dotenv.
 
-## APIs
+### APIs
 
-- `Bun.serve()` supports WebSockets, HTTPS, and routes. Don't use `express`.
+- `Bun.serve()` for HTTP. Don't use `express`.
 - `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
-- `Bun.redis` for Redis. Don't use `ioredis`.
-- `Bun.sql` for Postgres. Don't use `pg` or `postgres.js`.
+- Prefer `Bun.file` over `node:fs` readFile/writeFile.
 - `WebSocket` is built-in. Don't use `ws`.
-- Prefer `Bun.file` over `node:fs`'s readFile/writeFile
-- Bun.$`ls` instead of execa.
 
-## Testing
+### Testing
 
-Use `bun test` to run tests.
+Use `bun test` to run tests. Test files: `*.test.ts`.
 
-```ts#index.test.ts
-import { test, expect } from "bun:test";
+## Fork Divergence from Upstream
 
-test("hello world", () => {
-  expect(1).toBe(1);
-});
-```
+| Feature | Status | Commit |
+|---------|--------|--------|
+| session_name field in peers table | Done | `6b8ec50` |
+| set_name MCP tool | Done | `6b8ec50` |
+| Schema migration (ALTER TABLE) for existing DBs | Done | `6b8ec50` |
+| from_name in channel push meta | Done | `6b8ec50` |
+| [SESSION_NAME] tag in CLI output | Done | `6b8ec50` |
+| Full message logging (stderr + file) | Done | pending |
+| ZSH wrapper for auto-channel-push | Done (in ~/.zshrc) | N/A |
 
-## Frontend
+**Sync policy**: Monthly `git fetch upstream`, cherry-pick selectively. Upstream has 8 open PRs to watch.
 
-Use HTML imports with `Bun.serve()`. Don't use `vite`. HTML imports fully support React, CSS, Tailwind.
+## Key Files
 
-Server:
-
-```ts#index.ts
-import index from "./index.html"
-
-Bun.serve({
-  routes: {
-    "/": index,
-    "/api/users/:id": {
-      GET: (req) => {
-        return new Response(JSON.stringify({ id: req.params.id }));
-      },
-    },
-  },
-  // optional websocket support
-  websocket: {
-    open: (ws) => {
-      ws.send("Hello, world!");
-    },
-    message: (ws, message) => {
-      ws.send(message);
-    },
-    close: (ws) => {
-      // handle close
-    }
-  },
-  development: {
-    hmr: true,
-    console: true,
-  }
-})
-```
-
-HTML files can import .tsx, .jsx or .js files directly and Bun's bundler will transpile & bundle automatically. `<link>` tags can point to stylesheets and Bun's CSS bundler will bundle.
-
-```html#index.html
-<html>
-  <body>
-    <h1>Hello, world!</h1>
-    <script type="module" src="./frontend.tsx"></script>
-  </body>
-</html>
-```
-
-With the following `frontend.tsx`:
-
-```tsx#frontend.tsx
-import React from "react";
-import { createRoot } from "react-dom/client";
-
-// import .css files directly and it works
-import './index.css';
-
-const root = createRoot(document.body);
-
-export default function Frontend() {
-  return <h1>Hello, world!</h1>;
-}
-
-root.render(<Frontend />);
-```
-
-Then, run index.ts
-
-```sh
-bun --hot ./index.ts
-```
-
-For more information, read the Bun API docs in `node_modules/bun-types/docs/**.mdx`.
+| File | Purpose |
+|------|---------|
+| `FYI.md` | Decision journal and backlog |
+| `CLAUDE.md` | This file — project instructions |
+| `shared/types.ts` | All TypeScript interfaces |
+| `broker.ts` | HTTP server + SQLite |
+| `server.ts` | MCP server + channel push |
+| `cli.ts` | CLI utility |

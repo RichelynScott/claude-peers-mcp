@@ -1,0 +1,362 @@
+{
+  "indexed_at": "2026-03-24T11:38:34.242700",
+  "root": ".",
+  "project_structure": {
+    "type": "tree",
+    "root": ".",
+    "tree": [
+      ".",
+      "\u251c\u2500\u2500 docs/",
+      "\u251c\u2500\u2500 logs/ (8 files)",
+      "\u251c\u2500\u2500 shared/ (2 files)",
+      "\u251c\u2500\u2500 package.json",
+      "\u2514\u2500\u2500 README.md"
+    ]
+  },
+  "documentation_map": {
+    "README.md": {
+      "sections": [
+        "claude-peers",
+        "Quick start",
+        "1. Install",
+        "2. Register the MCP server",
+        "3. Run Claude Code with the channel",
+        "4. Open a second session and try it",
+        "What Claude can do",
+        "How it works",
+        "Auto-summary",
+        "CLI"
+      ],
+      "architecture_hints": []
+    },
+    "FYI.md": {
+      "sections": [
+        "FYI - claude-peers-mcp Decision Journal",
+        "2026-03-24 - session_name feature implemented",
+        "What: Added session_name as first-class field to peer registry",
+        "Why: Claude Code sessions use /rename for human-friendly names, but list_peers only showed opaque 8-char IDs. Peers need to identify each other by name.",
+        "How: New field in Peer/RegisterRequest types, ALTER TABLE migration for existing DBs, /set-name broker endpoint, set_name MCP tool, Name shown first in list_peers output, from_name in channel push meta, [SESSION_NAME] tag in CLI output.",
+        "Impact: Peers can now identify each other by session name. Channel notifications include from_name metadata.",
+        "Related: `6b8ec50`",
+        "2026-03-24 - Knowledge transfer from ADD_MORE_2_CC session",
+        "What: Full backlog and architectural insights transferred from the session that adopted and configured claude-peers-mcp",
+        "Why: ADD_MORE_2_CC completed initial setup (fork, ZSH wrapper, global CLAUDE.md docs, MCP scoping) and needed to hand off project ownership"
+      ],
+      "architecture_hints": []
+    },
+    "CLAUDE.md": {
+      "sections": [
+        "claude-peers-mcp",
+        "Architecture",
+        "MCP Tools",
+        "Running",
+        "ZSH wrapper auto-includes --dangerously-load-development-channels flag.",
+        "Just run claude normally \u2014 channel push is automatic.",
+        "CLI:",
+        "Observability",
+        "Bun",
+        "APIs"
+      ],
+      "architecture_hints": []
+    }
+  },
+  "directory_purposes": {},
+  "stats": {
+    "total_files": 9,
+    "total_directories": 6,
+    "fully_parsed": {
+      "typescript": 6
+    },
+    "listed_only": {
+      "json": 3
+    },
+    "markdown_files": 3
+  },
+  "files": {
+    ".mcp.json": {
+      "language": "json",
+      "parsed": false
+    },
+    "cli.ts": {
+      "language": "typescript",
+      "parsed": true,
+      "functions": {
+        "brokerFetch": {
+          "signature": "async (path: string, body?: unknown): Promise<T>",
+          "called_by": [
+            "main",
+            "cleanup"
+          ]
+        }
+      },
+      "classes": {},
+      "constants": {
+        "BROKER_PORT": "value",
+        "BROKER_URL": "str"
+      },
+      "variables": [
+        "opts",
+        "res",
+        "cmd",
+        "health",
+        "peers",
+        "nameTag",
+        "parts",
+        "toId",
+        "msg",
+        "result",
+        "proc",
+        "pids"
+      ],
+      "call_graph": {}
+    },
+    "broker.ts": {
+      "language": "typescript",
+      "parsed": true,
+      "imports": [
+        "bun:sqlite"
+      ],
+      "functions": {
+        "cleanStalePeers": "()",
+        "generateId": {
+          "signature": "(): string",
+          "called_by": [
+            "handleRegister"
+          ]
+        },
+        "handleRegister": {
+          "calls": [
+            "generateId"
+          ],
+          "signature": "(body: RegisterRequest): RegisterResponse"
+        },
+        "handleHeartbeat": "(body: HeartbeatRequest): void",
+        "handleSetSummary": "(body: SetSummaryRequest): void",
+        "handleSetName": "(body: SetNameRequest): void",
+        "handleListPeers": "(body: ListPeersRequest): Peer[]",
+        "handleSendMessage": "(body: SendMessageRequest): ",
+        "handlePollMessages": "(body: PollMessagesRequest): PollMessagesResponse",
+        "handleUnregister": "(body: { id: string }): void"
+      },
+      "classes": {},
+      "constants": {
+        "PORT": "value",
+        "DB_PATH": "value"
+      },
+      "variables": [
+        "db",
+        "peers",
+        "insertPeer",
+        "updateLastSeen",
+        "updateSummary",
+        "updateName",
+        "deletePeer",
+        "selectAllPeers",
+        "selectPeersByDirectory",
+        "selectPeersByGitRoot",
+        "insertMessage",
+        "selectUndelivered",
+        "markDelivered",
+        "chars",
+        "id",
+        "i",
+        "now",
+        "existing",
+        "target",
+        "messages",
+        "url",
+        "path",
+        "body",
+        "msg"
+      ],
+      "call_graph": {}
+    },
+    "package.json": {
+      "language": "json",
+      "parsed": false
+    },
+    "server.ts": {
+      "language": "typescript",
+      "parsed": true,
+      "imports": [
+        "@modelcontextprotocol/sdk/server/index.js",
+        "@modelcontextprotocol/sdk/server/stdio.js",
+        "@modelcontextprotocol/sdk/types.js",
+        "./shared/summarize.ts"
+      ],
+      "functions": {
+        "brokerFetch": {
+          "signature": "async (path: string, body: unknown): Promise<T>",
+          "called_by": [
+            "main",
+            "cleanup"
+          ]
+        },
+        "isBrokerAlive": {
+          "signature": "async (): Promise<boolean>",
+          "called_by": [
+            "ensureBroker"
+          ]
+        },
+        "ensureBroker": {
+          "calls": [
+            "isBrokerAlive",
+            "log"
+          ],
+          "signature": "async (): Promise<void>",
+          "called_by": [
+            "main"
+          ]
+        },
+        "log": {
+          "signature": "(msg: string)",
+          "called_by": [
+            "ensureBroker",
+            "pollAndPushMessages",
+            "main",
+            "summaryPromise",
+            "cleanup"
+          ]
+        },
+        "getGitRoot": {
+          "signature": "async (cwd: string): Promise<string | null>",
+          "called_by": [
+            "main"
+          ]
+        },
+        "getTty": {
+          "signature": "(): string | null",
+          "called_by": [
+            "main"
+          ]
+        },
+        "pollAndPushMessages": {
+          "calls": [
+            "log"
+          ],
+          "signature": "async ()"
+        },
+        "main": {
+          "calls": [
+            "brokerFetch",
+            "ensureBroker",
+            "getGitRoot",
+            "getTty",
+            "log"
+          ],
+          "signature": "async ()"
+        },
+        "summaryPromise": {
+          "calls": [
+            "log"
+          ],
+          "signature": "async (async ()"
+        },
+        "cleanup": {
+          "calls": [
+            "brokerFetch",
+            "log"
+          ],
+          "signature": "async ()"
+        }
+      },
+      "classes": {},
+      "constants": {
+        "BROKER_PORT": "value",
+        "BROKER_URL": "str",
+        "POLL_INTERVAL_MS": "number",
+        "HEARTBEAT_INTERVAL_MS": "value",
+        "BROKER_SCRIPT": "value",
+        "TOOLS": "collection"
+      },
+      "variables": [
+        "res",
+        "err",
+        "proc",
+        "i",
+        "text",
+        "code",
+        "ppid",
+        "tty",
+        "myCwd",
+        "mcp",
+        "scope",
+        "peers",
+        "lines",
+        "parts",
+        "result",
+        "timestamp",
+        "logPath",
+        "fromSummary",
+        "fromCwd",
+        "fromName",
+        "sender",
+        "senderLabel",
+        "logEntry",
+        "initialSummary",
+        "summaryPromise",
+        "branch",
+        "recentFiles",
+        "summary",
+        "reg",
+        "pollTimer",
+        "heartbeatTimer",
+        "cleanup"
+      ],
+      "call_graph": {}
+    },
+    "index.ts": {
+      "language": "typescript",
+      "parsed": false,
+      "purpose": "Application entry point"
+    },
+    "tsconfig.json": {
+      "language": "json",
+      "parsed": false,
+      "purpose": "Configuration"
+    },
+    "shared/summarize.ts": {
+      "language": "typescript",
+      "parsed": true,
+      "functions": {
+        "generateSummary": "async (context: { cwd: string; git_root: string | null; git_branch?: string | null; recent_files?: string[]; }): Promise<string | null>",
+        "getGitBranch": "async (cwd: string): Promise<string | null>",
+        "getRecentFiles": "async (cwd: string, limit = 10): Promise<string[]>"
+      },
+      "classes": {},
+      "variables": [
+        "apiKey",
+        "parts",
+        "res",
+        "data",
+        "proc",
+        "text",
+        "code",
+        "diffProc",
+        "diffText",
+        "files",
+        "logProc",
+        "logText",
+        "logFiles",
+        "allFiles"
+      ],
+      "call_graph": {}
+    },
+    "shared/types.ts": {
+      "language": "typescript",
+      "parsed": false
+    }
+  },
+  "dependency_graph": {
+    "broker.ts": [
+      "bun:sqlite"
+    ],
+    "server.ts": [
+      "@modelcontextprotocol/sdk/server/index.js",
+      "@modelcontextprotocol/sdk/server/stdio.js",
+      "@modelcontextprotocol/sdk/types.js",
+      "shared/summarize.ts"
+    ]
+  },
+  "staleness_check": 1773761914.292571
+}

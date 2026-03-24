@@ -331,6 +331,19 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
             isError: true,
           };
         }
+        // Log outbound messages for observability
+        const timestamp = new Date().toLocaleTimeString();
+        log(`--- MESSAGE SENT ---\n[${timestamp}] To ${to_id}:\n${message}\n--- END MESSAGE ---`);
+        try {
+          const logPath = `${process.env.HOME}/.claude-peers-messages.log`;
+          await Bun.write(
+            Bun.file(logPath),
+            (await Bun.file(logPath).exists() ? await Bun.file(logPath).text() : "") +
+              `\n${"=".repeat(60)}\n[${timestamp}] SENT to ${to_id}:\n${message}\n`
+          );
+        } catch {
+          // Non-critical
+        }
         return {
           content: [{ type: "text" as const, text: `Message sent to peer ${to_id}` }],
         };
@@ -486,7 +499,23 @@ async function pollAndPushMessages() {
         },
       });
 
-      log(`Pushed message from ${msg.from_id}: ${msg.text.slice(0, 80)}`);
+      // Full message log for observability (stderr + file)
+      const senderLabel = fromName || msg.from_id;
+      const timestamp = new Date().toLocaleTimeString();
+      const logEntry = `[${timestamp}] From ${senderLabel} (${msg.from_id}):\n${msg.text}`;
+      log(`--- MESSAGE RECEIVED ---\n${logEntry}\n--- END MESSAGE ---`);
+
+      // Append to persistent message log for tail -f monitoring
+      try {
+        const logPath = `${process.env.HOME}/.claude-peers-messages.log`;
+        await Bun.write(
+          Bun.file(logPath),
+          (await Bun.file(logPath).exists() ? await Bun.file(logPath).text() : "") +
+            `\n${"=".repeat(60)}\n${logEntry}\n`
+        );
+      } catch {
+        // Non-critical — file logging is best-effort
+      }
     }
   } catch (e) {
     // Broker might be down temporarily, don't crash
