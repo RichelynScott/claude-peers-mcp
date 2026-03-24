@@ -79,21 +79,8 @@ function cleanStalePeers() {
 
 cleanStalePeers();
 
-// Clean delivered messages older than 7 days
-function cleanDeliveredMessages() {
-  const result = deleteDeliveredMessages.run();
-  if (result.changes > 0) {
-    console.error(`[claude-peers broker] cleaned ${result.changes} delivered messages older than 7 days`);
-  }
-}
-
-cleanDeliveredMessages();
-
 // Periodically clean stale peers (every 30s)
 setInterval(cleanStalePeers, 30_000);
-
-// Periodically clean delivered messages (every 60s)
-setInterval(cleanDeliveredMessages, 60_000);
 
 // --- Prepared statements ---
 
@@ -146,6 +133,19 @@ const markDelivered = db.prepare(`
 const deleteDeliveredMessages = db.prepare(`
   DELETE FROM messages WHERE delivered = 1 AND sent_at < datetime('now', '-7 days')
 `);
+
+// Clean delivered messages older than 7 days
+function cleanDeliveredMessages() {
+  const result = deleteDeliveredMessages.run();
+  if (result.changes > 0) {
+    console.error(`[claude-peers broker] cleaned ${result.changes} delivered messages older than 7 days`);
+  }
+}
+
+cleanDeliveredMessages();
+
+// Periodically clean delivered messages (every 60s)
+setInterval(cleanDeliveredMessages, 60_000);
 
 // --- Generate peer ID ---
 

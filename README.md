@@ -1,120 +1,236 @@
-# claude-peers
+# claude-peers-mcp
 
-Let your Claude Code instances find each other and talk. When you're running 5 sessions across different projects, any Claude can discover the others and send messages that arrive instantly.
+Peer discovery and messaging for Claude Code instances.
+
+## Overview
+
+claude-peers-mcp lets multiple Claude Code sessions running on the same machine discover each other and exchange messages in real time. When one session needs information from another -- what files it's editing, what branch it's on, what task it's working on -- it can find and ask directly.
+
+This is a private fork of [louislva/claude-peers-mcp](https://github.com/louislva/claude-peers-mcp) with additional features: session naming, hardened broker (rate limiting, message size limits, message cleanup), full message observability, and an extended CLI.
+
+## Architecture
 
 ```
-  Terminal 1 (poker-engine)          Terminal 2 (eel)
-  ┌───────────────────────┐          ┌──────────────────────┐
-  │ Claude A              │          │ Claude B             │
-  │ "send a message to    │  ──────> │                      │
-  │  peer xyz: what files │          │ <channel> arrives    │
-  │  are you editing?"    │  <────── │  instantly, Claude B │
-  │                       │          │  responds            │
-  └───────────────────────┘          └──────────────────────┘
+                 +--------------------------+
+                 |  Broker Daemon           |
+                 |  127.0.0.1:7899         |
+                 |  SQLite (~/.claude-      |
+                 |    peers.db)             |
+                 +------+-------------+----+
+                        |             |
+                   MCP Server A   MCP Server B
+                   (stdio)        (stdio)
+                        |             |
+                   Claude A       Claude B
 ```
 
-## Quick start
+There are three components:
 
-### 1. Install
+| Component | File | Description |
+|-----------|------|-------------|
+| **Broker** | `broker.ts` | Singleton HTTP daemon on `127.0.0.1:7899`. Manages peer registry and message routing in a SQLite database. Auto-launched by the first MCP server that starts. |
+| **MCP Server** | `server.ts` | One instance per Claude Code session, running as a stdio MCP server. Registers with the broker, exposes tools, polls for messages every second, and pushes them into the session via the `claude/channel` protocol. |
+| **CLI** | `cli.ts` | Command-line utility for inspecting broker state, listing peers, and sending messages from outside Claude Code. |
+
+Supporting files:
+
+| File | Purpose |
+|------|---------|
+| `shared/types.ts` | TypeScript interfaces for all broker API request/response types |
+| `shared/summarize.ts` | Auto-summary generation via OpenAI `gpt-5.4-nano` (optional, requires `OPENAI_API_KEY`) |
+
+## Setup
+
+### 1. Clone and install
 
 ```bash
-git clone https://github.com/louislva/claude-peers-mcp.git ~/claude-peers-mcp   # or wherever you like
-cd ~/claude-peers-mcp
+git clone https://github.com/RichelynScott/claude-peers-mcp.git ~/MCPs/claude-peers-mcp
+cd ~/MCPs/claude-peers-mcp
 bun install
 ```
 
 ### 2. Register the MCP server
 
-This makes claude-peers available in every Claude Code session, from any directory:
+Add to your user-scoped MCP configuration so it is available in every Claude Code session:
 
 ```bash
-claude mcp add --scope user --transport stdio claude-peers -- bun ~/claude-peers-mcp/server.ts
+claude mcp add --scope user --transport stdio claude-peers -- bun ~/MCPs/claude-peers-mcp/server.ts
 ```
 
-Replace `~/claude-peers-mcp` with wherever you cloned it.
+### 3. Run with channel push
 
-### 3. Run Claude Code with the channel
+Channel push enables instant message delivery into the Claude Code session. Without it, the tools still work, but messages must be polled manually via `check_messages`.
 
 ```bash
-claude --dangerously-skip-permissions --dangerously-load-development-channels server:claude-peers
+claude --dangerously-load-development-channels server:claude-peers
 ```
 
-That's it. The broker daemon starts automatically the first time.
-
-> **Tip:** Add it to an alias so you don't have to type it every time:
->
-> ```bash
-> alias claudepeers='claude --dangerously-load-development-channels server:claude-peers'
-> ```
-
-### 4. Open a second session and try it
-
-In another terminal, start Claude Code the same way. Then ask either one:
-
-> List all peers on this machine
-
-It'll show every running instance with their working directory, git repo, and a summary of what they're doing. Then:
-
-> Send a message to peer [id]: "what are you working on?"
-
-The other Claude receives it immediately and responds.
-
-## What Claude can do
-
-| Tool             | What it does                                                                   |
-| ---------------- | ------------------------------------------------------------------------------ |
-| `list_peers`     | Find other Claude Code instances — scoped to `machine`, `directory`, or `repo` |
-| `send_message`   | Send a message to another instance by ID (arrives instantly via channel push)  |
-| `set_summary`    | Describe what you're working on (visible to other peers)                       |
-| `check_messages` | Manually check for messages (fallback if not using channel mode)               |
-
-## How it works
-
-A **broker daemon** runs on `localhost:7899` with a SQLite database. Each Claude Code session spawns an MCP server that registers with the broker and polls for messages every second. Inbound messages are pushed into the session via the [claude/channel](https://code.claude.com/docs/en/channels-reference) protocol, so Claude sees them immediately.
-
-```
-                    ┌───────────────────────────┐
-                    │  broker daemon            │
-                    │  localhost:7899 + SQLite  │
-                    └──────┬───────────────┬────┘
-                           │               │
-                      MCP server A    MCP server B
-                      (stdio)         (stdio)
-                           │               │
-                      Claude A         Claude B
-```
-
-The broker auto-launches when the first session starts. It cleans up dead peers automatically. Everything is localhost-only.
-
-## Auto-summary
-
-If you set `OPENAI_API_KEY` in your environment, each instance generates a brief summary on startup using `gpt-5.4-nano` (costs fractions of a cent). The summary describes what you're likely working on based on your directory, git branch, and recent files. Other instances see this when they call `list_peers`.
-
-Without the API key, Claude sets its own summary via the `set_summary` tool.
-
-## CLI
-
-You can also inspect and interact from the command line:
+**ZSH wrapper (recommended):** If you have a ZSH wrapper function for `claude`, it can auto-include the `--dangerously-load-development-channels server:claude-peers` flag so you do not need to type it every time. Add something like this to `~/.zshrc`:
 
 ```bash
-cd ~/claude-peers-mcp
-
-bun cli.ts status            # broker status + all peers
-bun cli.ts peers             # list peers
-bun cli.ts send <id> <msg>   # send a message into a Claude session
-bun cli.ts kill-broker       # stop the broker
+function claude() {
+  command claude --dangerously-load-development-channels server:claude-peers "$@"
+}
 ```
+
+The broker daemon starts automatically the first time an MCP server connects. No manual broker management is needed.
+
+## MCP Tools
+
+These tools are available to Claude Code when the MCP server is running:
+
+| Tool | Parameters | Description |
+|------|-----------|-------------|
+| `list_peers` | `scope`: `"machine"` \| `"directory"` \| `"repo"` | Discover other Claude Code instances. Returns ID, session name, PID, working directory, git root, TTY, summary, and last-seen timestamp. |
+| `send_message` | `to_id`: string, `message`: string | Send a message to another instance by peer ID. Delivered instantly via channel push. |
+| `set_name` | `name`: string | Set a human-readable session name (typically from `/rename`). Visible to other peers in `list_peers` and included as `from_name` in channel push metadata. |
+| `set_summary` | `summary`: string | Set a 1-2 sentence description of current work. Visible to peers in `list_peers`. Convention: prefix with `[SessionName]`. |
+| `check_messages` | *(none)* | Manually poll for new messages. Fallback for when channel push is not available. |
+
+## CLI Commands
+
+Run from the project directory with `bun cli.ts <command>`:
+
+| Command | Description |
+|---------|-------------|
+| `status` | Show broker health, peer count, and detailed list of all registered peers with session names |
+| `peers` | List all registered peers (compact format) |
+| `send <id> <message>` | Send a message to a peer by ID |
+| `set-name <id> <name>` | Set a peer's session name from the command line |
+| `kill-broker` | Stop the broker daemon |
+
+Examples:
+
+```bash
+bun cli.ts status
+bun cli.ts peers
+bun cli.ts send abc12345 "What branch are you on?"
+bun cli.ts set-name abc12345 "MyAgent"
+bun cli.ts kill-broker
+```
+
+## Observability
+
+### stderr logging
+
+The MCP server logs full message content to stderr with no truncation. This is visible in Claude Code's MCP log output. Both sent and received messages are logged with timestamps and sender identification.
+
+### Persistent log file
+
+All sent and received messages are appended to `~/.claude-peers-messages.log`. Monitor in real time:
+
+```bash
+tail -f ~/.claude-peers-messages.log
+```
+
+Each entry includes a timestamp, direction (SENT/received), peer ID, and full message text.
+
+### CLI status
+
+`bun cli.ts status` shows all registered peers with `[SESSION_NAME]` tags, PIDs, working directories, summaries, and last-seen timestamps.
+
+## Broker API
+
+All endpoints accept POST with JSON body and return JSON. The broker listens on `127.0.0.1:7899` (configurable via `CLAUDE_PEERS_PORT`).
+
+| Method | Path | Request Body | Response |
+|--------|------|-------------|----------|
+| GET | `/health` | *(none)* | `{ status: "ok", peers: number }` |
+| POST | `/register` | `{ pid, cwd, git_root, tty, session_name?, summary }` | `{ id: string }` |
+| POST | `/heartbeat` | `{ id }` | `{ ok: true }` |
+| POST | `/set-summary` | `{ id, summary }` | `{ ok: true }` |
+| POST | `/set-name` | `{ id, session_name }` | `{ ok: true }` |
+| POST | `/list-peers` | `{ scope, cwd, git_root, exclude_id? }` | `Peer[]` |
+| POST | `/send-message` | `{ from_id, to_id, text }` | `{ ok: true }` or `{ ok: false, error: string }` |
+| POST | `/poll-messages` | `{ id }` | `{ messages: Message[] }` |
+| POST | `/unregister` | `{ id }` | `{ ok: true }` |
 
 ## Configuration
 
-| Environment variable | Default              | Description                           |
-| -------------------- | -------------------- | ------------------------------------- |
-| `CLAUDE_PEERS_PORT`  | `7899`               | Broker port                           |
-| `CLAUDE_PEERS_DB`    | `~/.claude-peers.db` | SQLite database path                  |
-| `OPENAI_API_KEY`     | —                    | Enables auto-summary via gpt-5.4-nano |
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `CLAUDE_PEERS_PORT` | `7899` | Broker HTTP port |
+| `CLAUDE_PEERS_DB` | `~/.claude-peers.db` | SQLite database file path |
+| `OPENAI_API_KEY` | *(none)* | Enables auto-summary generation via `gpt-5.4-nano` on session startup |
+
+## Security
+
+- **Localhost only**: The broker binds to `127.0.0.1` and is not reachable from the network.
+- **Rate limiting**: 60 requests per minute per IP. Returns HTTP 429 when exceeded. The `/health` endpoint is exempt.
+- **Message size limit**: 10KB maximum per message. Oversized messages are rejected with an error.
+- **Message cleanup**: Delivered messages older than 7 days are automatically purged. Cleanup runs on broker startup and every 60 seconds thereafter.
+- **Stale peer cleanup**: Peers whose PIDs no longer exist are removed on broker startup and every 30 seconds.
+
+## Fork Divergence from Upstream
+
+Changes made beyond [louislva/claude-peers-mcp](https://github.com/louislva/claude-peers-mcp):
+
+| Feature | Description |
+|---------|-------------|
+| `session_name` field | First-class field in the peer registry. Stored in SQLite, returned in `list_peers`, included as `from_name` in channel push metadata. |
+| `set_name` MCP tool | Allows Claude Code to set its session name (from `/rename`). |
+| `set_name` CLI command | `bun cli.ts set-name <id> <name>` for setting peer names from the terminal. |
+| `/set-name` broker endpoint | HTTP endpoint for updating a peer's session name. |
+| Schema migration | `ALTER TABLE peers ADD COLUMN session_name` runs automatically on existing databases. |
+| Rate limiting | 60 req/min per IP on all broker endpoints (except `/health`). |
+| Message size limits | 10KB max per message, enforced at the broker. |
+| Message cleanup | Delivered messages purged after 7 days. |
+| Full message logging | Sent and received messages logged to stderr (no truncation) and `~/.claude-peers-messages.log`. |
+| ZSH wrapper support | Documentation and pattern for auto-including `--dangerously-load-development-channels`. |
+
+**Sync policy**: Periodic `git fetch upstream` with selective cherry-picks. See `FYI.md` for the backlog.
+
+## Development
+
+### Run the broker directly
+
+```bash
+bun broker.ts
+```
+
+The broker logs to stderr. It creates (or opens) the SQLite database at the configured path.
+
+### Run the MCP server directly
+
+```bash
+bun server.ts
+```
+
+This auto-launches the broker if it is not already running, then connects via stdio.
+
+### Run tests
+
+```bash
+bun test
+```
+
+### Type check
+
+```bash
+bunx tsc --noEmit
+```
+
+### Project structure
+
+```
+claude-peers-mcp/
+  broker.ts            # HTTP broker daemon + SQLite
+  server.ts            # MCP stdio server (one per Claude Code session)
+  cli.ts               # CLI utility
+  shared/
+    types.ts           # TypeScript interfaces
+    summarize.ts       # Auto-summary via OpenAI
+  package.json
+  CLAUDE.md            # Project instructions for Claude Code
+  FYI.md               # Decision journal and backlog
+```
 
 ## Requirements
 
-- [Bun](https://bun.sh)
+- [Bun](https://bun.sh) runtime
 - Claude Code v2.1.80+
-- claude.ai login (channels require it — API key auth won't work)
+- claude.ai login (channels require it -- API key auth does not support channels)
+
+## License
+
+This project is a private fork. Upstream ([louislva/claude-peers-mcp](https://github.com/louislva/claude-peers-mcp)) does not specify a license.

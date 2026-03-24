@@ -16,16 +16,16 @@
   "documentation_map": {
     "README.md": {
       "sections": [
-        "claude-peers",
-        "Quick start",
-        "1. Install",
+        "claude-peers-mcp",
+        "Overview",
+        "Architecture",
+        "Setup",
+        "1. Clone and install",
         "2. Register the MCP server",
-        "3. Run Claude Code with the channel",
-        "4. Open a second session and try it",
-        "What Claude can do",
-        "How it works",
-        "Auto-summary",
-        "CLI"
+        "3. Run with channel push",
+        "MCP Tools",
+        "CLI Commands",
+        "Observability"
       ],
       "architecture_hints": []
     },
@@ -70,7 +70,7 @@
     "listed_only": {
       "json": 4
     },
-    "markdown_files": 3
+    "markdown_files": 4
   },
   "files": {
     ".mcp.json": {
@@ -110,7 +110,7 @@
       },
       "classes": {},
       "updated_by_hook": true,
-      "updated_at": "2026-03-24T11:47:06.674221"
+      "updated_at": "2026-03-24T11:50:05.571238"
     },
     "PROJECT_INDEX.json": {
       "language": "json",
@@ -290,6 +290,23 @@
     "shared/types.ts": {
       "language": "typescript",
       "parsed": false
+    },
+    "broker.test.ts": {
+      "language": "typescript",
+      "parsed": true,
+      "functions": {
+        "post": "async (path: string, body: Record<string, unknown> = {}): Promise<Response>",
+        "registerPeer": {
+          "calls": [
+            "post"
+          ],
+          "signature": "async (overrides: Record<string, unknown> = {}): Promise<string>"
+        }
+      },
+      "classes": {},
+      "updated_by_hook": true,
+      "updated_at": "2026-03-24T11:50:46.856113",
+      "purpose": "Test file"
     }
   },
   "dependency_graph": {
