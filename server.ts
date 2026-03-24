@@ -320,7 +320,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         };
       }
       try {
-        const result = await brokerFetch<{ ok: boolean; error?: string }>("/send-message", {
+        const result = await brokerFetch<{ ok: boolean; error?: string; message_id?: number }>("/send-message", {
           from_id: myId,
           to_id,
           text: message,
@@ -333,16 +333,16 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         }
         // Log outbound messages for observability
         const timestamp = new Date().toLocaleTimeString();
-        log(`--- MESSAGE SENT ---\n[${timestamp}] To ${to_id}:\n${message}\n--- END MESSAGE ---`);
+        log(`--- MESSAGE SENT ---\n[${timestamp}] To ${to_id} (msg#${result.message_id}):\n${message}\n--- END MESSAGE ---`);
         try {
           const logPath = `${process.env.HOME}/.claude-peers-messages.log`;
-          const entry = `\n${"=".repeat(60)}\n[${timestamp}] SENT to ${to_id}:\n${message}\n`;
+          const entry = `\n${"=".repeat(60)}\n[${timestamp}] SENT to ${to_id} (msg#${result.message_id}):\n${message}\n`;
           await Bun.write(Bun.file(logPath), entry, { append: true });
         } catch {
           // Non-critical
         }
         return {
-          content: [{ type: "text" as const, text: `Message sent to peer ${to_id}` }],
+          content: [{ type: "text" as const, text: `Message sent to peer ${to_id} (msg#${result.message_id})` }],
         };
       } catch (e) {
         return {
@@ -459,6 +459,10 @@ async function pollAndPushMessages() {
 
   try {
     const result = await brokerFetch<PollMessagesResponse>("/poll-messages", { id: myId });
+    if (result.messages.length === 0) return;
+
+    // Two-phase delivery: push notifications first, then ack to broker
+    const ackedIds: number[] = [];
 
     for (const msg of result.messages) {
       // Look up the sender's info for context
@@ -496,6 +500,9 @@ async function pollAndPushMessages() {
         },
       });
 
+      // Notification succeeded — mark for ack
+      ackedIds.push(msg.id);
+
       // Full message log for observability (stderr + file)
       const senderLabel = fromName || msg.from_id;
       const timestamp = new Date().toLocaleTimeString();
@@ -509,6 +516,16 @@ async function pollAndPushMessages() {
         await Bun.write(Bun.file(logPath), entry, { append: true });
       } catch {
         // Non-critical — file logging is best-effort
+      }
+    }
+
+    // Phase 2: Ack delivered messages — only after successful notification push
+    if (ackedIds.length > 0) {
+      try {
+        await brokerFetch("/ack-messages", { id: myId, message_ids: ackedIds });
+      } catch (e) {
+        // Ack failed — messages stay undelivered, will retry on next poll (at-least-once)
+        log(`Ack failed, will retry next poll: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
   } catch (e) {

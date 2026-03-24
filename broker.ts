@@ -20,6 +20,7 @@ import type {
   SendMessageRequest,
   PollMessagesRequest,
   PollMessagesResponse,
+  AckMessagesRequest,
   Peer,
   Message,
 } from "./shared/types.ts";
@@ -226,31 +227,43 @@ function handleListPeers(body: ListPeersRequest): Peer[] {
   });
 }
 
-function handleSendMessage(body: SendMessageRequest): { ok: boolean; error?: string } {
+function handleSendMessage(body: SendMessageRequest): { ok: boolean; error?: string; message_id?: number } {
   // Enforce message size limit (10KB)
   if (body.text.length > 10240) {
     return { ok: false, error: "Message too large (max 10KB)" };
   }
 
-  // Verify target exists
-  const target = db.query("SELECT id FROM peers WHERE id = ?").get(body.to_id) as { id: string } | null;
+  // Verify target exists and is alive
+  const target = db.query("SELECT id, pid FROM peers WHERE id = ?").get(body.to_id) as { id: string; pid: number } | null;
   if (!target) {
     return { ok: false, error: `Peer ${body.to_id} not found` };
   }
 
-  insertMessage.run(body.from_id, body.to_id, body.text, new Date().toISOString());
-  return { ok: true };
+  // Liveness check — fail fast if recipient process is dead
+  try {
+    process.kill(target.pid, 0);
+  } catch {
+    // Clean up dead peer
+    deletePeer.run(target.id);
+    return { ok: false, error: `Peer ${body.to_id} is not running (PID ${target.pid} dead)` };
+  }
+
+  const result = insertMessage.run(body.from_id, body.to_id, body.text, new Date().toISOString());
+  return { ok: true, message_id: Number(result.lastInsertRowid) };
 }
 
 function handlePollMessages(body: PollMessagesRequest): PollMessagesResponse {
+  // Two-phase delivery: return messages but do NOT mark delivered.
+  // Recipient must call /ack-messages after successful channel notification push.
   const messages = selectUndelivered.all(body.id) as Message[];
-
-  // Mark them as delivered
-  for (const msg of messages) {
-    markDelivered.run(msg.id);
-  }
-
   return { messages };
+}
+
+function handleAckMessages(body: AckMessagesRequest): void {
+  // Phase 2: mark messages as delivered after recipient confirms receipt
+  for (const mid of body.message_ids) {
+    markDelivered.run(mid);
+  }
 }
 
 function handleUnregister(body: { id: string }): void {
@@ -324,6 +337,9 @@ Bun.serve({
           return Response.json(handleSendMessage(body as SendMessageRequest));
         case "/poll-messages":
           return Response.json(handlePollMessages(body as PollMessagesRequest));
+        case "/ack-messages":
+          handleAckMessages(body as AckMessagesRequest);
+          return Response.json({ ok: true });
         case "/unregister":
           handleUnregister(body as { id: string });
           return Response.json({ ok: true });

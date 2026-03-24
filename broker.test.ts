@@ -318,7 +318,7 @@ describe("Messaging", () => {
     expect(data.ok).toBe(true);
   });
 
-  test("POST /poll-messages returns undelivered messages and marks them delivered", async () => {
+  test("POST /poll-messages returns undelivered messages (without marking delivered)", async () => {
     // Send a fresh message to ensure there's something to poll
     await post("/send-message", {
       from_id: senderId,
@@ -328,7 +328,7 @@ describe("Messaging", () => {
 
     const res = await post("/poll-messages", { id: receiverId });
     expect(res.status).toBe(200);
-    const data = (await res.json()) as { messages: Array<{ from_id: string; text: string }> };
+    const data = (await res.json()) as { messages: Array<{ id: number; from_id: string; text: string }> };
     expect(data.messages.length).toBeGreaterThanOrEqual(1);
 
     const found = data.messages.find((m) => m.text === "Poll test message");
@@ -336,11 +336,43 @@ describe("Messaging", () => {
     expect(found?.from_id).toBe(senderId);
   });
 
-  test("Polling again returns empty after delivery", async () => {
+  test("Polling again still returns messages until acked (two-phase)", async () => {
     const res = await post("/poll-messages", { id: receiverId });
     expect(res.status).toBe(200);
-    const data = (await res.json()) as { messages: Array<unknown> };
-    expect(data.messages.length).toBe(0);
+    const data = (await res.json()) as { messages: Array<{ id: number }> };
+    // Messages NOT yet acked — should still be returned
+    expect(data.messages.length).toBeGreaterThanOrEqual(1);
+
+    // Now ack them
+    const messageIds = data.messages.map((m) => m.id);
+    const ackRes = await post("/ack-messages", { id: receiverId, message_ids: messageIds });
+    expect(ackRes.status).toBe(200);
+    const ackData = (await ackRes.json()) as { ok: boolean };
+    expect(ackData.ok).toBe(true);
+
+    // Now polling should return empty
+    const res2 = await post("/poll-messages", { id: receiverId });
+    const data2 = (await res2.json()) as { messages: Array<unknown> };
+    expect(data2.messages.length).toBe(0);
+  });
+
+  test("POST /send-message returns message_id", async () => {
+    const res = await post("/send-message", {
+      from_id: senderId,
+      to_id: receiverId,
+      text: "ID test message",
+    });
+    const data = (await res.json()) as { ok: boolean; message_id: number };
+    expect(data.ok).toBe(true);
+    expect(typeof data.message_id).toBe("number");
+    expect(data.message_id).toBeGreaterThan(0);
+
+    // Clean up: poll and ack
+    const poll = await post("/poll-messages", { id: receiverId });
+    const pollData = (await poll.json()) as { messages: Array<{ id: number }> };
+    if (pollData.messages.length > 0) {
+      await post("/ack-messages", { id: receiverId, message_ids: pollData.messages.map((m) => m.id) });
+    }
   });
 
   test("Sending to nonexistent peer returns error", async () => {
