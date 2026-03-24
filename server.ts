@@ -336,11 +336,8 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         log(`--- MESSAGE SENT ---\n[${timestamp}] To ${to_id}:\n${message}\n--- END MESSAGE ---`);
         try {
           const logPath = `${process.env.HOME}/.claude-peers-messages.log`;
-          await Bun.write(
-            Bun.file(logPath),
-            (await Bun.file(logPath).exists() ? await Bun.file(logPath).text() : "") +
-              `\n${"=".repeat(60)}\n[${timestamp}] SENT to ${to_id}:\n${message}\n`
-          );
+          const entry = `\n${"=".repeat(60)}\n[${timestamp}] SENT to ${to_id}:\n${message}\n`;
+          await Bun.write(Bun.file(logPath), entry, { append: true });
         } catch {
           // Non-critical
         }
@@ -508,11 +505,8 @@ async function pollAndPushMessages() {
       // Append to persistent message log for tail -f monitoring
       try {
         const logPath = `${process.env.HOME}/.claude-peers-messages.log`;
-        await Bun.write(
-          Bun.file(logPath),
-          (await Bun.file(logPath).exists() ? await Bun.file(logPath).text() : "") +
-            `\n${"=".repeat(60)}\n${logEntry}\n`
-        );
+        const entry = `\n${"=".repeat(60)}\n${logEntry}\n`;
+        await Bun.write(Bun.file(logPath), entry, { append: true });
       } catch {
         // Non-critical — file logging is best-effort
       }

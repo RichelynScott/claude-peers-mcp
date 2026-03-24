@@ -261,6 +261,14 @@ function handleUnregister(body: { id: string }): void {
 
 const rateLimits = new Map<string, { count: number; resetAt: number }>();
 
+// Clean expired rate limit entries every 60s to prevent unbounded map growth
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, limit] of rateLimits) {
+    if (now >= limit.resetAt) rateLimits.delete(ip);
+  }
+}, 60_000);
+
 // --- HTTP Server ---
 
 Bun.serve({
@@ -270,11 +278,9 @@ Bun.serve({
     const url = new URL(req.url);
     const path = url.pathname;
 
-    // Exempt /health from rate limiting
+    // /health is exempt from rate limiting (any method)
     if (path === "/health") {
-      if (req.method !== "POST") {
-        return Response.json({ status: "ok", peers: (selectAllPeers.all() as Peer[]).length });
-      }
+      return Response.json({ status: "ok", peers: (selectAllPeers.all() as Peer[]).length });
     }
 
     // Rate limiting: 60 requests per minute per IP
