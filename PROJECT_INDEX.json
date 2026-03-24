@@ -1,18 +1,20 @@
 {
-  "indexed_at": "2026-03-24T13:57:43.890066",
+  "indexed_at": "2026-03-24T15:04:35.488405",
   "root": ".",
   "project_structure": {
     "type": "tree",
     "root": ".",
     "tree": [
       ".",
-      "\u251c\u2500\u2500 app-logs/",
       "\u251c\u2500\u2500 archive/",
-      "\u2502   \u2514\u2500\u2500 app-logs/",
+      "\u2502   \u251c\u2500\u2500 app-logs/",
+      "\u2502   \u2514\u2500\u2500 app-logs-old/",
       "\u251c\u2500\u2500 cpm-logs/",
       "\u251c\u2500\u2500 docs/",
       "\u251c\u2500\u2500 logs/ (8 files)",
       "\u251c\u2500\u2500 shared/ (2 files)",
+      "\u251c\u2500\u2500 tasks/ (5 files)",
+      "\u2502   \u2514\u2500\u2500 ralph/ (5 files)",
       "\u251c\u2500\u2500 package.json",
       "\u2514\u2500\u2500 README.md"
     ]
@@ -53,15 +55,15 @@
     "FYI.md": {
       "sections": [
         "FYI - claude-peers-mcp Decision Journal",
+        "2026-03-24 - Future: LAN cross-machine peer discovery",
+        "What: Investigate enabling Claude Code sessions on different machines to communicate over the same local network",
+        "Why: User and coworker (Rafi) are on the same LAN. Currently CPM only works on localhost (127.0.0.1). Cross-machine communication would enable real-time collaboration between their Claude Code sessions.",
+        "How: TBD \u2014 needs research. Key considerations: (1) broker would need to bind to LAN IP instead of 127.0.0.1, (2) mDNS/Bonjour for auto-discovery vs manual IP config, (3) authentication is critical \u2014 shared secret token, mTLS, or pre-shared key, (4) encryption \u2014 TLS required for any non-localhost traffic, (5) firewall rules, (6) message signing to prevent spoofing. Security-first design: restrict to same subnet, require mutual auth, encrypt all traffic.",
+        "Impact: Would transform CPM from single-machine tool to team collaboration backbone",
+        "Related: Consult PAL MCP (Grok 4.20 + Gemini) for security architecture before implementation",
         "2026-03-24 - Two-phase message delivery + liveness check",
         "What: Replaced at-most-once delivery with at-least-once via two-phase poll+ack. Added PID liveness check on send.",
-        "Why: Messages were silently lost if channel notification failed after broker marked them delivered. User experienced \"sent but never received\" limbo. Grok 4.20 Reasoning (via PAL thinkdeep) recommended this over a 2s blocking wait approach.",
-        "How: /poll-messages no longer marks delivered. New /ack-messages endpoint called by MCP server AFTER successful notification push. If ack fails, messages stay undelivered and retry next poll. handleSendMessage now checks target PID liveness with process.kill(pid, 0) before inserting \u2014 dead peers get immediate error instead of silent queueing. Returns message_id for tracking.",
-        "Impact: At-least-once delivery guarantee. No more silent message loss. Dead peer detection on send. No added latency on happy path. 20 tests pass (52 assertions).",
-        "Related: `de82a12`",
-        "2026-03-24 - PAL code review fixes",
-        "What: Fixed 2 medium issues identified by PAL codereview (GPT-5.4 Pro)",
-        "Why: Rate limit map grew unbounded (memory leak on long-running broker), log file append was O(n) per write (read entire file, concatenate, rewrite)"
+        "Why: Messages were silently lost if channel notification failed after broker marked them delivered. User experienced \"sent but never received\" limbo. Grok 4.20 Reasoning (via PAL thinkdeep) recommended this over a 2s blocking wait approach."
       ],
       "architecture_hints": []
     },
@@ -79,19 +81,117 @@
         "APIs"
       ],
       "architecture_hints": []
+    },
+    "tasks/prd-lan-discovery.md": {
+      "sections": [
+        "PRD: LAN Cross-Machine Peer Discovery and Messaging",
+        "Introduction",
+        "Goals",
+        "User Stories",
+        "Phase A: Manual Federation (connect by IP, PSK auth, TLS)"
+      ],
+      "architecture_hints": []
+    },
+    "tasks/prd-structured-messages.md": {
+      "sections": [
+        "PRD: Structured Message Protocol + Broadcast",
+        "Introduction",
+        "Goals",
+        "User Stories",
+        "US-001: Send a typed message",
+        "US-002: Receive typed messages with metadata",
+        "US-003: Reply to a message (threading)",
+        "US-004: Broadcast to all peers in scope"
+      ],
+      "architecture_hints": []
+    },
+    "tasks/prd-broker-auth.md": {
+      "sections": [
+        "PRD: Broker Authentication via Shared Token",
+        "Introduction",
+        "Goals",
+        "User Stories",
+        "US-001: Auto-generated token on first broker start",
+        "US-002: Broker rejects unauthenticated requests",
+        "US-003: MCP server reads token and authenticates",
+        "US-004: CLI reads token and authenticates",
+        "US-0"
+      ],
+      "architecture_hints": []
+    },
+    "tasks/prd-auto-summary-hook.md": {
+      "sections": [
+        "PRD: Auto-Summary SessionStart Hook",
+        "Introduction",
+        "Goals",
+        "User Stories",
+        "US-001: Hook fires on session start",
+        "US-002: Hook discovers its own peer ID",
+        "US-003: Hook fails silently on errors",
+        "US-004: Hook configuration in settings.json",
+        "Functional Requirements",
+        "Non-Goals (Out of Scope)"
+      ],
+      "architecture_hints": []
+    },
+    "tasks/WORKFLOW-backlog-to-ralph-pipeline.md": {
+      "sections": [
+        "Workflow Pattern: Backlog-to-Ralph Pipeline",
+        "Overview",
+        "When to Use",
+        "Pipeline Steps",
+        "Ralph-Readiness Criteria for PRDs",
+        "PAL Planner Prompt Template",
+        "Tiering Decision Matrix",
+        "Example: claude-peers-mcp Backlog Application",
+        "Skills Used",
+        "Notes"
+      ],
+      "architecture_hints": []
+    },
+    "tasks/prd-auto-summary-cli.md": {
+      "sections": [
+        "PRD: Deterministic Auto-Summary CLI Command",
+        "Introduction",
+        "Goals",
+        "User Stories",
+        "US-001: Generate deterministic summary from git context",
+        "US-002: Graceful handling of non-git directories",
+        "US-003: Include TaskMaster state when available",
+        "US-004: Handle broker unavailability",
+        "US-005: Handle invalid peer ID",
+        "US-006: Missing peer-id argument"
+      ],
+      "architecture_hints": []
+    },
+    "tasks/prd-server-tests.md": {
+      "sections": [
+        "PRD: MCP Server Tool Handler Tests (server.test.ts)",
+        "Introduction",
+        "Goals",
+        "User Stories",
+        "US-001: Tool registration validation",
+        "US-002: list_peers tool tests",
+        "US-003: send_message tool tests",
+        "US-004: set_summary and set_name tool tests"
+      ],
+      "architecture_hints": []
     }
   },
-  "directory_purposes": {},
+  "directory_purposes": {
+    "tasks": "Test files and test utilities",
+    "tasks/ralph": "Test files and test utilities"
+  },
   "stats": {
-    "total_files": 11,
-    "total_directories": 10,
+    "total_files": 16,
+    "total_directories": 12,
     "fully_parsed": {
       "typescript": 7
     },
     "listed_only": {
-      "json": 4
+      "json": 9
     },
-    "markdown_files": 4
+    "markdown_files": 11
   },
   "files": {
     ".mcp.json": {
@@ -470,6 +570,27 @@
     "shared/types.ts": {
       "language": "typescript",
       "parsed": false
+    },
+    "tasks/ralph/prd-structured-messages.json": {
+      "language": "json",
+      "parsed": false
+    },
+    "tasks/ralph/prd-broker-auth.json": {
+      "language": "json",
+      "parsed": false
+    },
+    "tasks/ralph/prd-server-tests.json": {
+      "language": "json",
+      "parsed": false,
+      "purpose": "Test file"
+    },
+    "tasks/ralph/prd-auto-summary-cli.json": {
+      "language": "json",
+      "parsed": false
+    },
+    "tasks/ralph/prd-lan-discovery-phase-a.json": {
+      "language": "json",
+      "parsed": false
     }
   },
   "dependency_graph": {
@@ -487,5 +608,5 @@
       "shared/summarize.ts"
     ]
   },
-  "staleness_check": 1773770263.973191
+  "staleness_check": 1773774275.558865
 }
