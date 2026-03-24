@@ -15,7 +15,8 @@ Private fork of [louislva/claude-peers-mcp](https://github.com/louislva/claude-p
 | Tool | Description |
 |------|-------------|
 | `list_peers(scope)` | Discover peers. Scope: machine/directory/repo |
-| `send_message(to_id, text)` | Send message to peer by ID |
+| `send_message(to_id, text, type?, metadata?, reply_to?)` | Send message to peer by ID. Optional type (text/query/response/handoff/broadcast), metadata (JSON object), reply_to (message ID for threading) |
+| `broadcast_message(message, scope)` | Send message to all peers in scope (machine/directory/repo) |
 | `set_name(name)` | Set session name (from /rename) |
 | `set_summary(summary)` | Set work summary visible to peers |
 | `check_messages()` | Manual message poll (fallback — channel push is primary) |
@@ -88,6 +89,11 @@ Use `bun test` to run tests. Test files: `*.test.ts`.
 | PID liveness check on send | Done | `de82a12` |
 | Message ID returned on send | Done | `de82a12` |
 | ZSH wrapper for auto-channel-push | Done (in ~/.zshrc) | N/A |
+| Bearer token auth on all POST endpoints | Done | `8d52439` |
+| Structured messages (type/metadata/reply_to) | Done | `133d09e` |
+| Broadcast endpoint (/broadcast) | Done | `133d09e` |
+| broadcast_message MCP tool | Done | `133d09e` |
+| CLI broadcast command | Done | `133d09e` |
 
 **Sync policy**: Monthly `git fetch upstream`, cherry-pick selectively. Upstream has 8 open PRs to watch.
 
@@ -97,7 +103,7 @@ Use `bun test` to run tests. Test files: `*.test.ts`.
 |------|---------|
 | `FYI.md` | Decision journal and backlog |
 | `CLAUDE.md` | This file — project instructions |
-| `broker.test.ts` | Broker test suite (19 tests) |
+| `broker.test.ts` | Broker test suite (40 tests) |
 | `shared/types.ts` | All TypeScript interfaces |
 | `broker.ts` | HTTP server + SQLite |
 | `server.ts` | MCP server + channel push |

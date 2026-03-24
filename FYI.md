@@ -1,5 +1,12 @@
 # FYI - claude-peers-mcp Decision Journal
 
+## 2026-03-24 - Structured Message Protocol + Broadcast
+### What: Added typed messages (text/query/response/handoff/broadcast), JSON metadata, reply_to threading, and /broadcast endpoint
+### Why: Messages were untyped plain text, 1:1 only. Peers need semantic routing (query vs handoff vs broadcast) and group communication.
+### How: Schema migration (3 ALTER TABLE for type/metadata/reply_to columns), handleSendMessage validates type+metadata+reply_to, handleBroadcast uses handleListPeers for scope filtering with transactional multi-insert, MCP tools updated (send_message gains 3 optional params, new broadcast_message tool), channel notifications include type/metadata/reply_to in meta, check_messages formats with type prefixes. 15 new tests (7 structured + 8 broadcast). All 40 broker tests pass.
+### Impact: Peers can now send typed messages with structured payloads, thread conversations via reply_to, and broadcast to all peers in a scope. Fully backward compatible — existing callers without new fields work identically.
+### Related: `133d09e`
+
 ## 2026-03-24 - Backlog-to-Ralph Pipeline: 6 PRDs + 5 prd.json created
 ### What: Converted entire project backlog into Ralph-compatible PRDs using the Backlog-to-Ralph Pipeline workflow
 ### Why: User wanted all backlog items addressed systematically with autonomous execution capability via Ralph
@@ -79,8 +86,8 @@
 | Item | Details | Source |
 |------|---------|--------|
 | hcom bridge | Forward claude-peers discovery to hcom event log for unified visibility. | Opus 4.6 |
-| Structured message protocol | Add message types (query, response, handoff, broadcast), ACK beyond delivered flag. | ADD_MORE_2_CC |
-| Broadcast endpoint | /broadcast for sending to all peers or scoped groups. Currently 1:1 only. | ADD_MORE_2_CC |
+| ~~Structured message protocol~~ | ~~Add message types (query, response, handoff, broadcast), ACK beyond delivered flag.~~ | DONE `133d09e` |
+| ~~Broadcast endpoint~~ | ~~/broadcast for sending to all peers or scoped groups. Currently 1:1 only.~~ | DONE `133d09e` |
 | clink dual-bus registration | PAL's clink registers spawned agents with both hcom AND claude-peers. | GLM-5 |
 
 ### DEFERRED
