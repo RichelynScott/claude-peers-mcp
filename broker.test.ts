@@ -9,15 +9,41 @@ import * as fs from "node:fs";
 
 const TEST_PORT = 17899;
 const TEST_DB = "/tmp/claude-peers-test.db";
+const TEST_TOKEN_PATH = `/tmp/claude-peers-test-token-${crypto.randomUUID()}`;
 const BASE = `http://127.0.0.1:${TEST_PORT}`;
 
 let brokerProc: ReturnType<typeof Bun.spawn>;
+let testToken: string;
 
-// Helper: POST JSON to a broker endpoint
+// Helper: POST JSON to a broker endpoint (with auth token)
 async function post(path: string, body: Record<string, unknown> = {}): Promise<Response> {
   return fetch(`${BASE}${path}`, {
     method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${testToken}`,
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+// Helper: POST without auth header (for auth tests)
+async function postNoAuth(path: string, body: Record<string, unknown> = {}): Promise<Response> {
+  return fetch(`${BASE}${path}`, {
+    method: "POST",
     headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+// Helper: POST with a specific token (for auth tests)
+async function postWithToken(path: string, token: string, body: Record<string, unknown> = {}): Promise<Response> {
+  return fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`,
+    },
     body: JSON.stringify(body),
   });
 }
@@ -47,12 +73,19 @@ beforeAll(async () => {
     fs.unlinkSync(TEST_DB);
   } catch {}
 
+  // Generate a random test token and write to temp file
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  testToken = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+  fs.writeFileSync(TEST_TOKEN_PATH, testToken + "\n", { mode: 0o600 });
+
   brokerProc = Bun.spawn(["bun", "broker.ts"], {
     cwd: "/home/riche/MCPs/claude-peers-mcp",
     env: {
       ...process.env,
       CLAUDE_PEERS_PORT: String(TEST_PORT),
       CLAUDE_PEERS_DB: TEST_DB,
+      CLAUDE_PEERS_TOKEN: TEST_TOKEN_PATH,
     },
     stdio: ["ignore", "ignore", "pipe"],
   });
@@ -80,6 +113,9 @@ afterAll(() => {
   try {
     fs.unlinkSync(TEST_DB);
   } catch {}
+  try {
+    fs.unlinkSync(TEST_TOKEN_PATH);
+  } catch {}
 });
 
 // ---------------------------------------------------------------------------
@@ -93,6 +129,72 @@ describe("Health", () => {
     const data = (await res.json()) as { status: string; peers: number };
     expect(data.status).toBe("ok");
     expect(typeof data.peers).toBe("number");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Authentication
+// ---------------------------------------------------------------------------
+
+describe("Authentication", () => {
+  test("POST /register without Authorization returns 401", async () => {
+    const res = await postNoAuth("/register", {
+      pid: process.pid,
+      cwd: "/tmp/auth-test",
+      git_root: null,
+      tty: null,
+      session_name: "",
+      summary: "",
+    });
+    expect(res.status).toBe(401);
+    const data = (await res.json()) as { error: string };
+    expect(data.error).toBe("Unauthorized");
+  });
+
+  test("POST /register with wrong token returns 401", async () => {
+    const res = await postWithToken("/register", "deadbeef".repeat(8), {
+      pid: process.pid,
+      cwd: "/tmp/auth-test",
+      git_root: null,
+      tty: null,
+      session_name: "",
+      summary: "",
+    });
+    expect(res.status).toBe(401);
+    const data = (await res.json()) as { error: string };
+    expect(data.error).toBe("Unauthorized");
+  });
+
+  test("POST /register with correct token returns 200", async () => {
+    const res = await post("/register", {
+      pid: process.pid,
+      cwd: "/tmp/auth-test",
+      git_root: null,
+      tty: null,
+      session_name: "",
+      summary: "",
+    });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { id: string };
+    expect(data.id).toMatch(/^[a-z0-9]{8}$/);
+  });
+
+  test("GET /health without Authorization returns 200", async () => {
+    const res = await fetch(`${BASE}/health`);
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { status: string };
+    expect(data.status).toBe("ok");
+  });
+
+  test("POST /send-message without Authorization returns 401", async () => {
+    const res = await postNoAuth("/send-message", {
+      from_id: "test",
+      to_id: "test",
+      text: "hello",
+    });
+    expect(res.status).toBe(401);
+    const data = (await res.json()) as { error: string };
+    expect(data.error).toBe("Unauthorized");
   });
 });
 

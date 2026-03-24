@@ -1,5 +1,5 @@
 {
-  "indexed_at": "2026-03-24T15:04:35.488405",
+  "indexed_at": "2026-03-24T15:12:02.136242",
   "root": ".",
   "project_structure": {
     "type": "tree",
@@ -12,7 +12,7 @@
       "\u251c\u2500\u2500 cpm-logs/",
       "\u251c\u2500\u2500 docs/",
       "\u251c\u2500\u2500 logs/ (8 files)",
-      "\u251c\u2500\u2500 shared/ (2 files)",
+      "\u251c\u2500\u2500 shared/ (3 files)",
       "\u251c\u2500\u2500 tasks/ (5 files)",
       "\u2502   \u2514\u2500\u2500 ralph/ (5 files)",
       "\u251c\u2500\u2500 package.json",
@@ -183,15 +183,15 @@
     "tasks/ralph": "Test files and test utilities"
   },
   "stats": {
-    "total_files": 16,
-    "total_directories": 12,
+    "total_files": 17,
+    "total_directories": 27,
     "fully_parsed": {
-      "typescript": 7
+      "typescript": 8
     },
     "listed_only": {
       "json": 9
     },
-    "markdown_files": 12
+    "markdown_files": 11
   },
   "files": {
     ".mcp.json": {
@@ -571,6 +571,24 @@
       "language": "typescript",
       "parsed": false
     },
+    "shared/token.ts": {
+      "language": "typescript",
+      "parsed": true,
+      "imports": [
+        "node:fs"
+      ],
+      "functions": {
+        "readTokenSync": "(): string"
+      },
+      "classes": {},
+      "constants": {
+        "TOKEN_PATH": "value"
+      },
+      "variables": [
+        "content"
+      ],
+      "call_graph": {}
+    },
     "tasks/ralph/prd-structured-messages.json": {
       "language": "json",
       "parsed": false
@@ -606,7 +624,10 @@
       "@modelcontextprotocol/sdk/server/stdio.js",
       "@modelcontextprotocol/sdk/types.js",
       "shared/summarize.ts"
+    ],
+    "shared/token.ts": [
+      "node:fs"
     ]
   },
-  "staleness_check": 1773774275.558865
+  "staleness_check": 1773774722.219161
 }

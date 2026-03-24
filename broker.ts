@@ -10,6 +10,8 @@
  */
 
 import { Database } from "bun:sqlite";
+import { timingSafeEqual } from "crypto";
+import * as fs from "node:fs";
 import type {
   RegisterRequest,
   RegisterResponse,
@@ -28,6 +30,7 @@ import type {
 const PORT = parseInt(process.env.CLAUDE_PEERS_PORT ?? "7899", 10);
 const DB_PATH = process.env.CLAUDE_PEERS_DB ?? `${process.env.HOME}/.claude-peers.db`;
 const LOG_DIR = new URL("./cpm-logs", import.meta.url).pathname;
+const TOKEN_PATH = process.env.CLAUDE_PEERS_TOKEN ?? `${process.env.HOME}/.claude-peers-token`;
 
 // Ensure log directory exists
 try { require("fs").mkdirSync(LOG_DIR, { recursive: true }); } catch {}
@@ -37,6 +40,61 @@ function brokerLog(msg: string) {
   console.error(`[CPM-broker] ${msg}`);
   try { Bun.write(Bun.file(`${LOG_DIR}/broker.log`), line + "\n", { append: true }); } catch {}
 }
+
+// --- Token generation / loading ---
+
+function generateToken(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function loadOrCreateToken(): string {
+  if (fs.existsSync(TOKEN_PATH)) {
+    const content = fs.readFileSync(TOKEN_PATH, "utf-8").trim();
+    if (content) {
+      brokerLog(`Token loaded from ${TOKEN_PATH}`);
+      return content;
+    }
+  }
+  // Generate new token
+  const token = generateToken();
+  fs.writeFileSync(TOKEN_PATH, token + "\n", { mode: 0o600 });
+  brokerLog(`Token loaded from ${TOKEN_PATH}`);
+  return token;
+}
+
+let currentToken = loadOrCreateToken();
+
+function isValidToken(provided: string, expected: string): boolean {
+  if (provided.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
+}
+
+// Re-read token file periodically (60s) for rotation support
+function rereadToken(): void {
+  try {
+    if (!fs.existsSync(TOKEN_PATH)) {
+      brokerLog(`Warning: Token file missing at ${TOKEN_PATH}, keeping previous token`);
+      return;
+    }
+    const content = fs.readFileSync(TOKEN_PATH, "utf-8").trim();
+    if (content && content !== currentToken) {
+      currentToken = content;
+      brokerLog(`Token reloaded from ${TOKEN_PATH}`);
+    }
+  } catch {
+    brokerLog(`Warning: Failed to re-read token file at ${TOKEN_PATH}, keeping previous token`);
+  }
+}
+
+setInterval(rereadToken, 60_000);
+
+// SIGHUP handler for immediate token re-read
+process.on("SIGHUP", () => {
+  brokerLog("Received SIGHUP, re-reading token file");
+  rereadToken();
+});
 
 // --- Database setup ---
 
@@ -305,9 +363,21 @@ Bun.serve({
     const url = new URL(req.url);
     const path = url.pathname;
 
-    // /health exempt — always respond
+    // /health exempt — always respond (no auth required)
     if (path === "/health") {
       return Response.json({ status: "ok", peers: (selectAllPeers.all() as Peer[]).length });
+    }
+
+    // --- Auth check (before rate limiting and body parsing) ---
+    if (req.method === "POST") {
+      const authHeader = req.headers.get("authorization");
+      if (!authHeader || !authHeader.startsWith("Bearer ")) {
+        return Response.json({ error: "Unauthorized" }, { status: 401 });
+      }
+      const providedToken = authHeader.slice(7);
+      if (!isValidToken(providedToken, currentToken)) {
+        return Response.json({ error: "Unauthorized" }, { status: 401 });
+      }
     }
 
     // Rate limiting: only applies to /send-message (abuse vector).

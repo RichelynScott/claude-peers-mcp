@@ -31,6 +31,7 @@ import {
   getGitBranch,
   getRecentFiles,
 } from "./shared/summarize.ts";
+import { TOKEN_PATH, readTokenSync } from "./shared/token.ts";
 
 // --- Configuration ---
 
@@ -40,14 +41,43 @@ const POLL_INTERVAL_MS = 1000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const BROKER_SCRIPT = new URL("./broker.ts", import.meta.url).pathname;
 
+// --- Auth token (loaded after broker is up) ---
+
+let authToken: string = "";
+
 // --- Broker communication ---
 
 async function brokerFetch<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${BROKER_URL}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${authToken}`,
+    },
     body: JSON.stringify(body),
   });
+  // On 401, re-read token file and retry once (handles token rotation)
+  if (res.status === 401) {
+    try {
+      authToken = readTokenSync();
+    } catch {
+      const err = await res.text();
+      throw new Error(`Broker error (${path}): ${res.status} ${err}`);
+    }
+    const retryRes = await fetch(`${BROKER_URL}${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${authToken}`,
+      },
+      body: JSON.stringify(body),
+    });
+    if (!retryRes.ok) {
+      const err = await retryRes.text();
+      throw new Error(`Broker error (${path}): ${retryRes.status} ${err}`);
+    }
+    return retryRes.json() as Promise<T>;
+  }
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`Broker error (${path}): ${res.status} ${err}`);
@@ -554,6 +584,15 @@ async function pollAndPushMessages() {
 async function main() {
   // 1. Ensure broker is running
   await ensureBroker();
+
+  // 1b. Read auth token (broker creates the file on startup)
+  try {
+    authToken = readTokenSync();
+    log(`Auth token loaded from ${TOKEN_PATH}`);
+  } catch (e) {
+    log(`Fatal: Token file not found at ${TOKEN_PATH}. Is the broker running?`);
+    process.exit(1);
+  }
 
   // 2. Gather context
   myCwd = process.cwd();
