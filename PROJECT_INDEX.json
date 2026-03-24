@@ -55,15 +55,15 @@
     "FYI.md": {
       "sections": [
         "FYI - claude-peers-mcp Decision Journal",
+        "2026-03-24 - Backlog-to-Ralph Pipeline: 6 PRDs + 5 prd.json created",
+        "What: Converted entire project backlog into Ralph-compatible PRDs using the Backlog-to-Ralph Pipeline workflow",
+        "Why: User wanted all backlog items addressed systematically with autonomous execution capability via Ralph",
+        "How: PAL Planner (Grok 4.20 + Gemini 3.1 Pro) analyzed backlog \u2192 tiered items (Ralph vs direct subagent) \u2192 mapped dependency graph \u2192 phased PRD creation via parallel subagents \u2192 Ralph prd.json conversion. Key decisions: (1) bundled structured messages + broadcast into one PRD (broadcast IS a message type), (2) deferred server.test.ts until after auth + structured messages to avoid testing moving API, (3) split auto-summary into CLI (this repo) + hook (~/.claude/) due to cross-directory concern, (4) LAN discovery converted Phase A only (manual federation), (5) hcom bridge + clink dual-bus too small for Ralph \u2192 direct subagent tasks.",
+        "Impact: 6 PRDs (2170+ lines total), 5 Ralph prd.json files (45 stories total), ready for phased autonomous execution. Workflow pattern documented and integrated into research-methodologies skill by ADD_MORE_2_CC session.",
+        "Related: `8f344b9` through `4b885be` (11 commits). PAL continuation_id: `0c4aa37b-6f43-4e16-bb9a-88265ae318a5`",
         "2026-03-24 - Future: LAN cross-machine peer discovery",
         "What: Investigate enabling Claude Code sessions on different machines to communicate over the same local network",
-        "Why: User and coworker (Rafi) are on the same LAN. Currently CPM only works on localhost (127.0.0.1). Cross-machine communication would enable real-time collaboration between their Claude Code sessions.",
-        "How: TBD \u2014 needs research. Key considerations: (1) broker would need to bind to LAN IP instead of 127.0.0.1, (2) mDNS/Bonjour for auto-discovery vs manual IP config, (3) authentication is critical \u2014 shared secret token, mTLS, or pre-shared key, (4) encryption \u2014 TLS required for any non-localhost traffic, (5) firewall rules, (6) message signing to prevent spoofing. Security-first design: restrict to same subnet, require mutual auth, encrypt all traffic.",
-        "Impact: Would transform CPM from single-machine tool to team collaboration backbone",
-        "Related: Consult PAL MCP (Grok 4.20 + Gemini) for security architecture before implementation",
-        "2026-03-24 - Two-phase message delivery + liveness check",
-        "What: Replaced at-most-once delivery with at-least-once via two-phase poll+ack. Added PID liveness check on send.",
-        "Why: Messages were silently lost if channel notification failed after broker marked them delivered. User experienced \"sent but never received\" limbo. Grok 4.20 Reasoning (via PAL thinkdeep) recommended this over a 2s blocking wait approach."
+        "Why: User and coworker (Rafi) are on the same LAN. Currently CPM only works on localhost (127.0.0.1). Cross-machine communication would enable real-time collaboration between their Claude Code sessions."
       ],
       "architecture_hints": []
     },
@@ -191,7 +191,7 @@
     "listed_only": {
       "json": 9
     },
-    "markdown_files": 11
+    "markdown_files": 12
   },
   "files": {
     ".mcp.json": {
