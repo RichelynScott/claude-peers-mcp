@@ -1,5 +1,5 @@
 {
-  "indexed_at": "2026-03-24T11:41:30.947290",
+  "indexed_at": "2026-03-24T12:54:30.645459",
   "root": ".",
   "project_structure": {
     "type": "tree",
@@ -32,15 +32,15 @@
     "FYI.md": {
       "sections": [
         "FYI - claude-peers-mcp Decision Journal",
-        "2026-03-24 - session_name feature implemented",
-        "What: Added session_name as first-class field to peer registry",
-        "Why: Claude Code sessions use /rename for human-friendly names, but list_peers only showed opaque 8-char IDs. Peers need to identify each other by name.",
-        "How: New field in Peer/RegisterRequest types, ALTER TABLE migration for existing DBs, /set-name broker endpoint, set_name MCP tool, Name shown first in list_peers output, from_name in channel push meta, [SESSION_NAME] tag in CLI output.",
-        "Impact: Peers can now identify each other by session name. Channel notifications include from_name metadata.",
-        "Related: `6b8ec50`",
-        "2026-03-24 - Knowledge transfer from ADD_MORE_2_CC session",
-        "What: Full backlog and architectural insights transferred from the session that adopted and configured claude-peers-mcp",
-        "Why: ADD_MORE_2_CC completed initial setup (fork, ZSH wrapper, global CLAUDE.md docs, MCP scoping) and needed to hand off project ownership"
+        "2026-03-24 - Two-phase message delivery + liveness check",
+        "What: Replaced at-most-once delivery with at-least-once via two-phase poll+ack. Added PID liveness check on send.",
+        "Why: Messages were silently lost if channel notification failed after broker marked them delivered. User experienced \"sent but never received\" limbo. Grok 4.20 Reasoning (via PAL thinkdeep) recommended this over a 2s blocking wait approach.",
+        "How: /poll-messages no longer marks delivered. New /ack-messages endpoint called by MCP server AFTER successful notification push. If ack fails, messages stay undelivered and retry next poll. handleSendMessage now checks target PID liveness with process.kill(pid, 0) before inserting \u2014 dead peers get immediate error instead of silent queueing. Returns message_id for tracking.",
+        "Impact: At-least-once delivery guarantee. No more silent message loss. Dead peer detection on send. No added latency on happy path. 20 tests pass (52 assertions).",
+        "Related: `de82a12`",
+        "2026-03-24 - PAL code review fixes",
+        "What: Fixed 2 medium issues identified by PAL codereview (GPT-5.4 Pro)",
+        "Why: Rate limit map grew unbounded (memory leak on long-running broker), log file append was O(n) per write (read entire file, concatenate, rewrite)"
       ],
       "architecture_hints": []
     },
@@ -62,15 +62,15 @@
   },
   "directory_purposes": {},
   "stats": {
-    "total_files": 10,
+    "total_files": 11,
     "total_directories": 6,
     "fully_parsed": {
-      "typescript": 6
+      "typescript": 7
     },
     "listed_only": {
       "json": 4
     },
-    "markdown_files": 4
+    "markdown_files": 3
   },
   "files": {
     ".mcp.json": {
@@ -81,19 +81,53 @@
       "language": "typescript",
       "parsed": true,
       "functions": {
-        "brokerFetch": "async (path: string, body?: unknown): Promise<T>"
+        "brokerFetch": {
+          "signature": "async (path: string, body?: unknown): Promise<T>",
+          "called_by": [
+            "pollAndPushMessages",
+            "main",
+            "cleanup"
+          ]
+        }
       },
       "classes": {},
-      "updated_by_hook": true,
-      "updated_at": "2026-03-24T11:46:58.462518"
+      "constants": {
+        "BROKER_PORT": "value",
+        "BROKER_URL": "str"
+      },
+      "variables": [
+        "opts",
+        "res",
+        "cmd",
+        "health",
+        "peers",
+        "nameTag",
+        "parts",
+        "toId",
+        "msg",
+        "result",
+        "peerId",
+        "name",
+        "proc",
+        "pids"
+      ],
+      "call_graph": {}
     },
     "broker.ts": {
       "language": "typescript",
       "parsed": true,
+      "imports": [
+        "bun:sqlite"
+      ],
       "functions": {
         "cleanStalePeers": "()",
         "cleanDeliveredMessages": "()",
-        "generateId": "(): string",
+        "generateId": {
+          "signature": "(): string",
+          "called_by": [
+            "handleRegister"
+          ]
+        },
         "handleRegister": {
           "calls": [
             "generateId"
@@ -106,15 +140,115 @@
         "handleListPeers": "(body: ListPeersRequest): Peer[]",
         "handleSendMessage": "(body: SendMessageRequest): ",
         "handlePollMessages": "(body: PollMessagesRequest): PollMessagesResponse",
+        "handleAckMessages": "(body: AckMessagesRequest): void",
         "handleUnregister": "(body: { id: string }): void"
       },
       "classes": {},
-      "updated_by_hook": true,
-      "updated_at": "2026-03-24T11:50:05.571238"
+      "constants": {
+        "PORT": "value",
+        "DB_PATH": "value"
+      },
+      "variables": [
+        "db",
+        "peers",
+        "insertPeer",
+        "updateLastSeen",
+        "updateSummary",
+        "updateName",
+        "deletePeer",
+        "selectAllPeers",
+        "selectPeersByDirectory",
+        "selectPeersByGitRoot",
+        "insertMessage",
+        "selectUndelivered",
+        "markDelivered",
+        "deleteDeliveredMessages",
+        "result",
+        "chars",
+        "id",
+        "i",
+        "now",
+        "existing",
+        "target",
+        "messages",
+        "rateLimits",
+        "url",
+        "path",
+        "ip",
+        "limit",
+        "body",
+        "msg"
+      ],
+      "call_graph": {}
     },
     "PROJECT_INDEX.json": {
       "language": "json",
       "parsed": false
+    },
+    "broker.test.ts": {
+      "language": "typescript",
+      "parsed": true,
+      "purpose": "Test file",
+      "imports": [
+        "bun:test",
+        "node:fs"
+      ],
+      "functions": {
+        "post": {
+          "signature": "async (path: string, body: Record<string, unknown> = {}): Promise<Response>",
+          "called_by": [
+            "registerPeer"
+          ]
+        },
+        "registerPeer": {
+          "calls": [
+            "post"
+          ],
+          "signature": "async (overrides: Record<string, unknown> = {}): Promise<string>"
+        }
+      },
+      "classes": {},
+      "constants": {
+        "TEST_PORT": "number",
+        "TEST_DB": "str",
+        "BASE": "str"
+      },
+      "variables": [
+        "res",
+        "data",
+        "ready",
+        "i",
+        "id1",
+        "id2",
+        "peers",
+        "matchingPids",
+        "before",
+        "peersBefore",
+        "peerBefore",
+        "body",
+        "after",
+        "peersAfter",
+        "peerAfter",
+        "listRes",
+        "peer",
+        "ids",
+        "tempId",
+        "found",
+        "messageIds",
+        "ackRes",
+        "ackData",
+        "res2",
+        "data2",
+        "poll",
+        "pollData",
+        "text",
+        "targetRes",
+        "target",
+        "bigText",
+        "got429",
+        "results"
+      ],
+      "call_graph": {}
     },
     "package.json": {
       "language": "json",
@@ -133,6 +267,7 @@
         "brokerFetch": {
           "signature": "async (path: string, body: unknown): Promise<T>",
           "called_by": [
+            "pollAndPushMessages",
             "main",
             "cleanup"
           ]
@@ -177,6 +312,7 @@
         },
         "pollAndPushMessages": {
           "calls": [
+            "brokerFetch",
             "log"
           ],
           "signature": "async ()"
@@ -232,6 +368,7 @@
         "result",
         "timestamp",
         "logPath",
+        "entry",
         "fromSummary",
         "fromCwd",
         "fromName",
@@ -290,28 +427,15 @@
     "shared/types.ts": {
       "language": "typescript",
       "parsed": false
-    },
-    "broker.test.ts": {
-      "language": "typescript",
-      "parsed": true,
-      "functions": {
-        "post": "async (path: string, body: Record<string, unknown> = {}): Promise<Response>",
-        "registerPeer": {
-          "calls": [
-            "post"
-          ],
-          "signature": "async (overrides: Record<string, unknown> = {}): Promise<string>"
-        }
-      },
-      "classes": {},
-      "updated_by_hook": true,
-      "updated_at": "2026-03-24T11:50:46.856113",
-      "purpose": "Test file"
     }
   },
   "dependency_graph": {
     "broker.ts": [
       "bun:sqlite"
+    ],
+    "broker.test.ts": [
+      "bun:test",
+      "node:fs"
     ],
     "server.ts": [
       "@modelcontextprotocol/sdk/server/index.js",
@@ -320,5 +444,5 @@
       "shared/summarize.ts"
     ]
   },
-  "staleness_check": 1773762090.999892
+  "staleness_check": 1773766470.704428
 }
