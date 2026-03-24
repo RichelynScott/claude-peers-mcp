@@ -44,6 +44,7 @@ import {
   signMessage,
   verifySignature,
   ipInSubnet,
+  federationFetch,
 } from "./federation.ts";
 
 const PORT = parseInt(process.env.CLAUDE_PEERS_PORT ?? "7899", 10);
@@ -680,42 +681,34 @@ async function handleFederationConnect(body: FederationConnectRequest): Promise<
   }
 
   try {
-    // TLS handshake with remote federation agent
-    const response = await fetch(`https://${host}:${port}/federation/handshake`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Claude-Peers-PSK": currentToken,
-      },
-      body: JSON.stringify({
+    // TLS handshake with remote federation agent (curl workaround for self-signed certs)
+    const handshakeResult = await federationFetch<{ hostname: string; version: string; error?: string }>(
+      `https://${host}:${port}/federation/handshake`,
+      {
         psk: currentToken,
         hostname: federationHostname,
         version: "1.0.0",
-      } satisfies FederationHandshakeRequest),
-      tls: { rejectUnauthorized: false }, // Self-signed certs
-    });
+      } satisfies FederationHandshakeRequest,
+      currentToken,
+    );
 
-    if (!response.ok) {
-      const errBody = await response.json().catch(() => ({ error: response.statusText }));
-      return { ok: false, error: `Handshake failed (${response.status}): ${(errBody as { error?: string }).error ?? "unknown"}` };
+    if (!handshakeResult.ok) {
+      const errMsg = (handshakeResult.data as { error?: string })?.error ?? "unknown";
+      return { ok: false, error: `Handshake failed (${handshakeResult.status}): ${errMsg}` };
     }
 
-    const result = await response.json() as { hostname: string; version: string };
+    const result = handshakeResult.data;
 
     // Fetch initial peer list from remote
-    const peersResp = await fetch(`https://${host}:${port}/federation/peers`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Claude-Peers-PSK": currentToken,
-      },
-      body: JSON.stringify({}),
-      tls: { rejectUnauthorized: false },
-    });
+    const peersResult = await federationFetch<FederationPeersResponse>(
+      `https://${host}:${port}/federation/peers`,
+      {},
+      currentToken,
+    );
 
     let remotePeers: RemotePeer[] = [];
-    if (peersResp.ok) {
-      const peersData = await peersResp.json() as FederationPeersResponse;
+    if (peersResult.ok) {
+      const peersData = peersResult.data;
       remotePeers = peersData.peers.map((p: Peer) => ({
         id: `${result.hostname}:${p.id}`,
         machine: result.hostname,
@@ -808,19 +801,16 @@ async function handleFederationSendToRemote(body: {
   const signature = signMessage(relayBody, currentToken);
 
   try {
-    const resp = await fetch(`https://${targetMachine.host}:${targetMachine.port}/federation/relay`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Claude-Peers-PSK": currentToken,
-      },
-      body: JSON.stringify({ ...relayBody, signature }),
-      tls: { rejectUnauthorized: false },
-    });
+    // Use curl workaround for self-signed TLS certs
+    const resp = await federationFetch<{ ok?: boolean; error?: string }>(
+      `https://${targetMachine.host}:${targetMachine.port}/federation/relay`,
+      { ...relayBody, signature },
+      currentToken,
+    );
 
     if (!resp.ok) {
-      const errBody = await resp.json().catch(() => ({ error: resp.statusText }));
-      return { ok: false, error: `Relay failed (${resp.status}): ${(errBody as { error?: string }).error ?? "unknown"}` };
+      const errMsg = resp.data?.error ?? "unknown";
+      return { ok: false, error: `Relay failed (${resp.status}): ${errMsg}` };
     }
 
     return { ok: true };
@@ -839,22 +829,19 @@ async function syncRemotePeers(): Promise<void> {
 
   for (const [key, remote] of remoteMachines) {
     try {
-      const resp = await fetch(`https://${remote.host}:${remote.port}/federation/peers`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Claude-Peers-PSK": currentToken,
-        },
-        body: JSON.stringify({}),
-        tls: { rejectUnauthorized: false },
-      });
+      // Use curl workaround for self-signed TLS certs
+      const resp = await federationFetch<FederationPeersResponse>(
+        `https://${remote.host}:${remote.port}/federation/peers`,
+        {},
+        currentToken,
+      );
 
       if (!resp.ok) {
         federationLog(`Sync warning: ${remote.hostname} (${key}) returned ${resp.status}`);
         continue;
       }
 
-      const data = await resp.json() as FederationPeersResponse;
+      const data = resp.data;
       remote.peers = data.peers.map((p: Peer) => ({
         id: `${remote.hostname}:${p.id}`,
         machine: remote.hostname,

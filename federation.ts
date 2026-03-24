@@ -153,3 +153,41 @@ export async function detectSubnet(): Promise<string> {
   }
   return "0.0.0.0/0"; // Allow all if detection fails
 }
+
+// --- Federation HTTPS fetch via curl (Bun 1.3.x workaround) ---
+
+/**
+ * Fetch from a federation HTTPS endpoint (self-signed cert).
+ * Bun 1.3.x fetch() doesn't support tls: { rejectUnauthorized: false },
+ * so we use curl -sk as a workaround.
+ */
+export async function federationFetch<T>(
+  url: string,
+  body: Record<string, unknown>,
+  pskToken: string,
+  timeoutMs: number = 5000
+): Promise<{ ok: boolean; status: number; data: T }> {
+  const proc = Bun.spawn([
+    "curl", "-sk",
+    "--max-time", String(Math.ceil(timeoutMs / 1000)),
+    "-X", "POST",
+    "-H", "Content-Type: application/json",
+    "-H", `X-Claude-Peers-PSK: ${pskToken}`,
+    "-w", "\n%{http_code}",
+    "-d", JSON.stringify(body),
+    url
+  ], { stdout: "pipe", stderr: "ignore" });
+
+  const output = await new Response(proc.stdout).text();
+  await proc.exited;
+
+  const lines = output.trimEnd().split("\n");
+  const statusCode = parseInt(lines.pop() || "0");
+  const responseBody = lines.join("\n");
+
+  let data: T;
+  try { data = JSON.parse(responseBody); }
+  catch { data = responseBody as unknown as T; }
+
+  return { ok: statusCode >= 200 && statusCode < 300, status: statusCode, data };
+}
