@@ -36,14 +36,14 @@ bun cli.ts kill-broker     # stop broker daemon
 
 ## Observability
 
-All application logs are in `app-logs/` (gitignored):
+All CPM logs are in `cpm-logs/` (gitignored, log prefixes: `[CPM-broker]`, `[CPM-server]`):
 
-- **`app-logs/messages.log`**: All sent and received messages with timestamps, sender names, message IDs
-- **`app-logs/broker.log`**: Broker lifecycle — startup, peer cleanup, message cleanup, rate limiting
-- **`app-logs/server.log`**: MCP server — registration, polling, connection events, errors
+- **`cpm-logs/messages.log`**: All sent and received messages with timestamps, sender names, message IDs
+- **`cpm-logs/broker.log`**: Broker lifecycle — startup, peer cleanup, message cleanup, rate limiting
+- **`cpm-logs/server.log`**: MCP server — registration, polling, connection events, errors
 - **stderr**: Also echoed to stderr (visible in Claude Code MCP logs)
 - **CLI**: `bun cli.ts status` shows registered peers with [SESSION_NAME] tags
-- **Monitor all**: `tail -f app-logs/*.log`
+- **Monitor all**: `tail -f cpm-logs/*.log`
 
 ## Bun
 

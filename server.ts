@@ -93,17 +93,17 @@ async function ensureBroker(): Promise<void> {
 
 // --- Utility ---
 
-const APP_LOG_DIR = new URL("./app-logs", import.meta.url).pathname;
-const MSG_LOG_PATH = `${APP_LOG_DIR}/messages.log`;
-const SERVER_LOG_PATH = `${APP_LOG_DIR}/server.log`;
+const CPM_LOG_DIR = new URL("./cpm-logs", import.meta.url).pathname;
+const MSG_LOG_PATH = `${CPM_LOG_DIR}/messages.log`;
+const SERVER_LOG_PATH = `${CPM_LOG_DIR}/server.log`;
 
 // Ensure log directory exists
-try { require("fs").mkdirSync(APP_LOG_DIR, { recursive: true }); } catch {}
+try { require("fs").mkdirSync(CPM_LOG_DIR, { recursive: true }); } catch {}
 
 function log(msg: string) {
   // MCP stdio servers must only use stderr for logging (stdout is the MCP protocol)
-  const line = `[${new Date().toISOString()}] ${msg}`;
-  console.error(`[claude-peers] ${msg}`);
+  const line = `[${new Date().toISOString()}] [CPM-server] ${msg}`;
+  console.error(`[CPM-server] ${msg}`);
   try { Bun.write(Bun.file(SERVER_LOG_PATH), line + "\n", { append: true }); } catch {}
 }
 

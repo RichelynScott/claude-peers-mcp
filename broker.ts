@@ -27,14 +27,14 @@ import type {
 
 const PORT = parseInt(process.env.CLAUDE_PEERS_PORT ?? "7899", 10);
 const DB_PATH = process.env.CLAUDE_PEERS_DB ?? `${process.env.HOME}/.claude-peers.db`;
-const LOG_DIR = new URL("./app-logs", import.meta.url).pathname;
+const LOG_DIR = new URL("./cpm-logs", import.meta.url).pathname;
 
 // Ensure log directory exists
 try { require("fs").mkdirSync(LOG_DIR, { recursive: true }); } catch {}
 
 function brokerLog(msg: string) {
-  const line = `[${new Date().toISOString()}] ${msg}`;
-  console.error(`[claude-peers broker] ${msg}`);
+  const line = `[${new Date().toISOString()}] [CPM-broker] ${msg}`;
+  console.error(`[CPM-broker] ${msg}`);
   try { Bun.write(Bun.file(`${LOG_DIR}/broker.log`), line + "\n", { append: true }); } catch {}
 }
 

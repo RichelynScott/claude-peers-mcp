@@ -36,8 +36,8 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # Claude Code project data
 .claude/
 
-# Application logs (broker, server, messages)
-app-logs/*.log
+# CPM logs (broker, server, messages)
+cpm-logs/*.log
 
 # Archive
 archive/

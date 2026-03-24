@@ -1,11 +1,12 @@
 {
-  "indexed_at": "2026-03-24T12:54:30.645459",
+  "indexed_at": "2026-03-24T13:06:23.740545",
   "root": ".",
   "project_structure": {
     "type": "tree",
     "root": ".",
     "tree": [
       ".",
+      "\u251c\u2500\u2500 app-logs/",
       "\u251c\u2500\u2500 docs/",
       "\u251c\u2500\u2500 logs/ (8 files)",
       "\u251c\u2500\u2500 shared/ (2 files)",
@@ -14,6 +15,23 @@
     ]
   },
   "documentation_map": {
+    "TROUBLESHOOTING.md": {
+      "sections": [
+        "Troubleshooting \u2014 claude-peers-mcp",
+        "Quick Diagnostics",
+        "Is the broker running?",
+        "Who's connected?",
+        "Watch message traffic in real time",
+        "Watch broker events (startup, cleanup, errors)",
+        "Watch MCP server events (registration, polling, errors)",
+        "Watch everything at once",
+        "Log Files",
+        "Common Issues"
+      ],
+      "architecture_hints": [
+        "/tmp/check.js"
+      ]
+    },
     "README.md": {
       "sections": [
         "claude-peers-mcp",
@@ -63,14 +81,14 @@
   "directory_purposes": {},
   "stats": {
     "total_files": 11,
-    "total_directories": 6,
+    "total_directories": 7,
     "fully_parsed": {
       "typescript": 7
     },
     "listed_only": {
       "json": 4
     },
-    "markdown_files": 3
+    "markdown_files": 7
   },
   "files": {
     ".mcp.json": {
@@ -116,18 +134,16 @@
     "broker.ts": {
       "language": "typescript",
       "parsed": true,
-      "imports": [
-        "bun:sqlite"
-      ],
       "functions": {
+        "brokerLog": "(msg: string)",
         "cleanStalePeers": "()",
-        "cleanDeliveredMessages": "()",
-        "generateId": {
-          "signature": "(): string",
-          "called_by": [
-            "handleRegister"
-          ]
+        "cleanDeliveredMessages": {
+          "calls": [
+            "brokerLog"
+          ],
+          "signature": "()"
         },
+        "generateId": "(): string",
         "handleRegister": {
           "calls": [
             "generateId"
@@ -144,42 +160,8 @@
         "handleUnregister": "(body: { id: string }): void"
       },
       "classes": {},
-      "constants": {
-        "PORT": "value",
-        "DB_PATH": "value"
-      },
-      "variables": [
-        "db",
-        "peers",
-        "insertPeer",
-        "updateLastSeen",
-        "updateSummary",
-        "updateName",
-        "deletePeer",
-        "selectAllPeers",
-        "selectPeersByDirectory",
-        "selectPeersByGitRoot",
-        "insertMessage",
-        "selectUndelivered",
-        "markDelivered",
-        "deleteDeliveredMessages",
-        "result",
-        "chars",
-        "id",
-        "i",
-        "now",
-        "existing",
-        "target",
-        "messages",
-        "rateLimits",
-        "url",
-        "path",
-        "ip",
-        "limit",
-        "body",
-        "msg"
-      ],
-      "call_graph": {}
+      "updated_by_hook": true,
+      "updated_at": "2026-03-24T13:07:16.136783"
     },
     "PROJECT_INDEX.json": {
       "language": "json",
@@ -257,59 +239,19 @@
     "server.ts": {
       "language": "typescript",
       "parsed": true,
-      "imports": [
-        "@modelcontextprotocol/sdk/server/index.js",
-        "@modelcontextprotocol/sdk/server/stdio.js",
-        "@modelcontextprotocol/sdk/types.js",
-        "./shared/summarize.ts"
-      ],
       "functions": {
-        "brokerFetch": {
-          "signature": "async (path: string, body: unknown): Promise<T>",
-          "called_by": [
-            "pollAndPushMessages",
-            "main",
-            "cleanup"
-          ]
-        },
-        "isBrokerAlive": {
-          "signature": "async (): Promise<boolean>",
-          "called_by": [
-            "ensureBroker"
-          ]
-        },
+        "brokerFetch": "async (path: string, body: unknown): Promise<T>",
+        "isBrokerAlive": "async (): Promise<boolean>",
         "ensureBroker": {
           "calls": [
             "isBrokerAlive",
             "log"
           ],
-          "signature": "async (): Promise<void>",
-          "called_by": [
-            "main"
-          ]
+          "signature": "async (): Promise<void>"
         },
-        "log": {
-          "signature": "(msg: string)",
-          "called_by": [
-            "ensureBroker",
-            "pollAndPushMessages",
-            "main",
-            "summaryPromise",
-            "cleanup"
-          ]
-        },
-        "getGitRoot": {
-          "signature": "async (cwd: string): Promise<string | null>",
-          "called_by": [
-            "main"
-          ]
-        },
-        "getTty": {
-          "signature": "(): string | null",
-          "called_by": [
-            "main"
-          ]
-        },
+        "log": "(msg: string)",
+        "getGitRoot": "async (cwd: string): Promise<string | null>",
+        "getTty": "(): string | null",
         "pollAndPushMessages": {
           "calls": [
             "brokerFetch",
@@ -342,50 +284,8 @@
         }
       },
       "classes": {},
-      "constants": {
-        "BROKER_PORT": "value",
-        "BROKER_URL": "str",
-        "POLL_INTERVAL_MS": "number",
-        "HEARTBEAT_INTERVAL_MS": "value",
-        "BROKER_SCRIPT": "value",
-        "TOOLS": "collection"
-      },
-      "variables": [
-        "res",
-        "err",
-        "proc",
-        "i",
-        "text",
-        "code",
-        "ppid",
-        "tty",
-        "myCwd",
-        "mcp",
-        "scope",
-        "peers",
-        "lines",
-        "parts",
-        "result",
-        "timestamp",
-        "logPath",
-        "entry",
-        "fromSummary",
-        "fromCwd",
-        "fromName",
-        "sender",
-        "senderLabel",
-        "logEntry",
-        "initialSummary",
-        "summaryPromise",
-        "branch",
-        "recentFiles",
-        "summary",
-        "reg",
-        "pollTimer",
-        "heartbeatTimer",
-        "cleanup"
-      ],
-      "call_graph": {}
+      "updated_by_hook": true,
+      "updated_at": "2026-03-24T13:07:24.677620"
     },
     "index.ts": {
       "language": "typescript",
@@ -444,5 +344,5 @@
       "shared/summarize.ts"
     ]
   },
-  "staleness_check": 1773766470.704428
+  "staleness_check": 1773767183.799689
 }

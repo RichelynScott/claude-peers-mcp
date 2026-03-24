@@ -10,29 +10,29 @@ bun cli.ts status
 bun cli.ts peers
 
 # Watch message traffic in real time
-tail -f app-logs/messages.log
+tail -f cpm-logs/messages.log
 
 # Watch broker events (startup, cleanup, errors)
-tail -f app-logs/broker.log
+tail -f cpm-logs/broker.log
 
 # Watch MCP server events (registration, polling, errors)
-tail -f app-logs/server.log
+tail -f cpm-logs/server.log
 
 # Watch everything at once
-tail -f app-logs/*.log
+tail -f cpm-logs/*.log
 ```
 
 ## Log Files
 
-All application logs are in `app-logs/` (gitignored, local only):
+All application logs are in `cpm-logs/` (gitignored, local only):
 
 | File | Contents |
 |------|----------|
-| `app-logs/messages.log` | All sent and received messages with timestamps and sender names |
-| `app-logs/broker.log` | Broker lifecycle: startup, peer cleanup, message cleanup, errors |
-| `app-logs/server.log` | MCP server: registration, polling, connection events, errors |
+| `cpm-logs/messages.log` | All sent and received messages with timestamps and sender names |
+| `cpm-logs/broker.log` | Broker lifecycle: startup, peer cleanup, message cleanup, errors |
+| `cpm-logs/server.log` | MCP server: registration, polling, connection events, errors |
 
-Note: Claude Code hook logs (chat.json, pre_tool_use.json, etc.) are in `logs/` — these are unrelated to our application.
+Note: Claude Code hook logs (chat.json, pre_tool_use.json, etc.) are in `logs/` — these are unrelated to CPM.
 
 ---
 
