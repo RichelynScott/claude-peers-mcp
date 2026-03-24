@@ -49,6 +49,7 @@ switch (cmd) {
             cwd: string;
             git_root: string | null;
             tty: string | null;
+            session_name: string;
             summary: string;
             last_seen: string;
           }>
@@ -60,7 +61,8 @@ switch (cmd) {
 
         console.log("\nPeers:");
         for (const p of peers) {
-          console.log(`  ${p.id}  PID:${p.pid}  ${p.cwd}`);
+          const nameTag = p.session_name ? ` [${p.session_name}]` : "";
+          console.log(`  ${p.id}${nameTag}  PID:${p.pid}  ${p.cwd}`);
           if (p.summary) console.log(`         ${p.summary}`);
           if (p.tty) console.log(`         TTY: ${p.tty}`);
           console.log(`         Last seen: ${p.last_seen}`);
@@ -81,6 +83,7 @@ switch (cmd) {
           cwd: string;
           git_root: string | null;
           tty: string | null;
+          session_name: string;
           summary: string;
           last_seen: string;
         }>
@@ -94,7 +97,8 @@ switch (cmd) {
         console.log("No peers registered.");
       } else {
         for (const p of peers) {
-          const parts = [`${p.id}  PID:${p.pid}  ${p.cwd}`];
+          const nameTag = p.session_name ? ` [${p.session_name}]` : "";
+          const parts = [`${p.id}${nameTag}  PID:${p.pid}  ${p.cwd}`];
           if (p.summary) parts.push(`  Summary: ${p.summary}`);
           console.log(parts.join("\n"));
         }

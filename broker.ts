@@ -15,6 +15,7 @@ import type {
   RegisterResponse,
   HeartbeatRequest,
   SetSummaryRequest,
+  SetNameRequest,
   ListPeersRequest,
   SendMessageRequest,
   PollMessagesRequest,
@@ -44,6 +45,9 @@ db.run(`
     last_seen TEXT NOT NULL
   )
 `);
+
+// Schema migration: add session_name column for existing databases
+try { db.run("ALTER TABLE peers ADD COLUMN session_name TEXT DEFAULT ''"); } catch { /* column already exists */ }
 
 db.run(`
   CREATE TABLE IF NOT EXISTS messages (
@@ -81,8 +85,8 @@ setInterval(cleanStalePeers, 30_000);
 // --- Prepared statements ---
 
 const insertPeer = db.prepare(`
-  INSERT INTO peers (id, pid, cwd, git_root, tty, summary, registered_at, last_seen)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  INSERT INTO peers (id, pid, cwd, git_root, tty, session_name, summary, registered_at, last_seen)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 `);
 
 const updateLastSeen = db.prepare(`
@@ -91,6 +95,10 @@ const updateLastSeen = db.prepare(`
 
 const updateSummary = db.prepare(`
   UPDATE peers SET summary = ? WHERE id = ?
+`);
+
+const updateName = db.prepare(`
+  UPDATE peers SET session_name = ? WHERE id = ?
 `);
 
 const deletePeer = db.prepare(`
@@ -145,7 +153,7 @@ function handleRegister(body: RegisterRequest): RegisterResponse {
     deletePeer.run(existing.id);
   }
 
-  insertPeer.run(id, body.pid, body.cwd, body.git_root, body.tty, body.summary, now, now);
+  insertPeer.run(id, body.pid, body.cwd, body.git_root, body.tty, body.session_name ?? "", body.summary, now, now);
   return { id };
 }
 
@@ -155,6 +163,10 @@ function handleHeartbeat(body: HeartbeatRequest): void {
 
 function handleSetSummary(body: SetSummaryRequest): void {
   updateSummary.run(body.summary, body.id);
+}
+
+function handleSetName(body: SetNameRequest): void {
+  updateName.run(body.session_name, body.id);
 }
 
 function handleListPeers(body: ListPeersRequest): Peer[] {
@@ -250,6 +262,9 @@ Bun.serve({
           return Response.json({ ok: true });
         case "/set-summary":
           handleSetSummary(body as SetSummaryRequest);
+          return Response.json({ ok: true });
+        case "/set-name":
+          handleSetName(body as SetNameRequest);
           return Response.json({ ok: true });
         case "/list-peers":
           return Response.json(handleListPeers(body as ListPeersRequest));

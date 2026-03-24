@@ -7,6 +7,7 @@ export interface Peer {
   cwd: string;
   git_root: string | null;
   tty: string | null;
+  session_name: string;
   summary: string;
   registered_at: string; // ISO timestamp
   last_seen: string; // ISO timestamp
@@ -28,6 +29,7 @@ export interface RegisterRequest {
   cwd: string;
   git_root: string | null;
   tty: string | null;
+  session_name: string;
   summary: string;
 }
 
@@ -42,6 +44,11 @@ export interface HeartbeatRequest {
 export interface SetSummaryRequest {
   id: PeerId;
   summary: string;
+}
+
+export interface SetNameRequest {
+  id: PeerId;
+  session_name: string;
 }
 
 export interface ListPeersRequest {

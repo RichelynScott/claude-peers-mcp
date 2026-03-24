@@ -158,9 +158,10 @@ Available tools:
 - list_peers: Discover other Claude Code instances (scope: machine/directory/repo)
 - send_message: Send a message to another instance by ID
 - set_summary: Set a 1-2 sentence summary of what you're working on (visible to other peers)
+- set_name: Set your session name (from /rename). Helps peers identify you by name instead of opaque ID.
 - check_messages: Manually check for new messages
 
-When you start, proactively call set_summary to describe what you're working on. This helps other instances understand your context.`,
+When you start or after using /rename, call set_name with your session name. This helps other instances identify you by name instead of opaque ID. Also call set_summary with [SESSION_NAME] prefix convention: '[MySession] description of work'.`,
   }
 );
 
@@ -219,6 +220,21 @@ const TOOLS = [
     },
   },
   {
+    name: "set_name",
+    description:
+      "Set your session name (from /rename). Visible to peers in list_peers.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        name: {
+          type: "string" as const,
+          description: "Your Claude Code session name (from /rename)",
+        },
+      },
+      required: ["name"],
+    },
+  },
+  {
     name: "check_messages",
     description:
       "Manually check for new messages from other Claude Code instances. Messages are normally pushed automatically via channel notifications, but you can use this as a fallback.",
@@ -266,6 +282,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
             `PID: ${p.pid}`,
             `CWD: ${p.cwd}`,
           ];
+          if (p.session_name) parts.unshift(`Name: ${p.session_name}`);
           if (p.git_root) parts.push(`Repo: ${p.git_root}`);
           if (p.tty) parts.push(`TTY: ${p.tty}`);
           if (p.summary) parts.push(`Summary: ${p.summary}`);
@@ -356,6 +373,32 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
     }
 
+    case "set_name": {
+      const { name: sessionName } = args as { name: string };
+      if (!myId) {
+        return {
+          content: [{ type: "text" as const, text: "Not registered with broker yet" }],
+          isError: true,
+        };
+      }
+      try {
+        await brokerFetch("/set-name", { id: myId, session_name: sessionName });
+        return {
+          content: [{ type: "text" as const, text: `Session name set: "${sessionName}"` }],
+        };
+      } catch (e) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Error setting name: ${e instanceof Error ? e.message : String(e)}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+
     case "check_messages": {
       if (!myId) {
         return {
@@ -411,6 +454,7 @@ async function pollAndPushMessages() {
       // Look up the sender's info for context
       let fromSummary = "";
       let fromCwd = "";
+      let fromName = "";
       try {
         const peers = await brokerFetch<Peer[]>("/list-peers", {
           scope: "machine",
@@ -421,6 +465,7 @@ async function pollAndPushMessages() {
         if (sender) {
           fromSummary = sender.summary;
           fromCwd = sender.cwd;
+          fromName = sender.session_name ?? "";
         }
       } catch {
         // Non-critical, proceed without sender info
@@ -433,6 +478,7 @@ async function pollAndPushMessages() {
           content: msg.text,
           meta: {
             from_id: msg.from_id,
+            from_name: fromName,
             from_summary: fromSummary,
             from_cwd: fromCwd,
             sent_at: msg.sent_at,
