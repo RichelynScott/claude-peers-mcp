@@ -1,5 +1,12 @@
 # FYI - claude-peers-mcp Decision Journal
 
+## 2026-03-24 - PAL Codereview: Critical process isolation fix
+### What: PAL codereview (Gemini 3.1 Pro) caught a critical architecture flaw in the prd.json — server.ts and broker.ts run as SEPARATE PROCESSES
+### Why: Bug Fix #2 from PAL consensus incorrectly assumed server.ts and broker.ts run in the same process. In reality, server.ts spawns broker.ts via Bun.spawn() (line 106). They communicate via HTTP only.
+### How: The codereview identified that US-011 (send to remote) and US-010 (list peers with LAN scope) cannot use in-process function calls or shared memory. Fixed by: (1) splitting federation endpoints into LAN-facing (PSK auth, for remote agents) and local-facing (bearer auth, for server.ts/cli.ts), (2) server.ts sends to /federation/send-to-remote HTTP endpoint instead of direct function call, (3) broker's /list-peers handles scope='lan' merging internally, (4) CLI commands route through broker endpoints. Also added Ed25519→RSA fallback, sync error handling, and 3 additional tests.
+### Impact: Prevented Ralph from building a broken split-brain architecture. 6 PRD fixes applied in commit `1edfe5e`. This validates the PAL codereview workflow — the expert model caught what 4 consensus models missed.
+### Related: `1edfe5e`
+
 ## 2026-03-24 - PAL Consensus + Local Verification: LAN Federation Architecture Validated
 ### What: Multi-model consensus (4 frontier models) + 5 local Bun API smoke tests validated the federation architecture and identified PRD refinements
 ### Why: Research-to-PRD Pipeline Phase 2 — validate architecture with external models before implementation
