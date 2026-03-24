@@ -1,0 +1,139 @@
+{
+  "project": "claude-peers-mcp",
+  "branchName": "ralph/server-tests",
+  "description": "Integration test suite for all 6 MCP tool handlers in server.ts (list_peers, send_message, set_summary, set_name, check_messages, broadcast_message). Tests the full stack through the MCP protocol: client -> stdio -> server -> broker -> response. Assumes broker auth (prd-broker-auth.md) and structured messages + broadcast (prd-structured-messages.md) are already implemented. Creates server.test.ts with ~18-20 tests, completing in under 30 seconds.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Test infrastructure setup (beforeAll, afterAll, helpers)",
+      "description": "As a developer, I want the test file scaffolding with beforeAll/afterAll lifecycle hooks, helper functions (post, registerHelperPeer, resultText, getServerPeerId), imports, and constants so that all subsequent test stories have a working foundation to build on",
+      "acceptanceCriteria": [
+        "server.test.ts exists with correct imports (bun:test, @modelcontextprotocol/sdk client + StdioClientTransport, node:fs, node:crypto)",
+        "Constants defined: TEST_PORT=18899, TEST_DB, TEST_TOKEN_PATH, TEST_TOKEN, BASE, PROJECT_DIR",
+        "beforeAll starts broker process with test env vars, waits for /health, connects MCP client via StdioClientTransport, pauses for server registration",
+        "afterAll closes client and transport, kills broker process, cleans up temp DB and token files",
+        "Helper function post() sends authenticated POST requests to broker with Bearer token",
+        "Helper function registerHelperPeer() registers a peer directly via broker HTTP API and returns its ID",
+        "Helper function resultText() extracts text from MCP tool call result content array",
+        "Helper function getServerPeerId() discovers the MCP server's own peer ID via broker /list-peers",
+        "sleepProcess spawned for multi-PID tests, killed in afterAll",
+        "File has empty describe blocks for all 7 test groups as placeholders",
+        "bun test server.test.ts runs without errors (0 tests, 0 failures)",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Tool registration validation",
+      "description": "As a developer, I want a test that verifies listTools() returns all 6 tools with correct names and schemas so that MCP clients can discover and invoke the tools correctly",
+      "acceptanceCriteria": [
+        "Test: client.listTools() returns exactly 6 tools",
+        "Test verifies tool names are: list_peers, send_message, set_summary, set_name, check_messages, broadcast_message",
+        "Test verifies each tool has a non-empty description string",
+        "Test verifies each tool has a valid inputSchema with type: 'object' and properties",
+        "Test verifies send_message schema includes optional type, metadata, reply_to properties",
+        "Test verifies broadcast_message schema includes required message and scope properties",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "list_peers tool tests",
+      "description": "As a developer, I want tests that verify the list_peers tool returns correct peer data through the MCP protocol so that peer discovery works end-to-end",
+      "acceptanceCriteria": [
+        "Test: list_peers with scope 'machine' returns empty array when no other peers registered (server excludes itself)",
+        "Test: After registering a helper peer via broker HTTP API, list_peers returns that peer with correct fields (ID, CWD, summary)",
+        "Test: Scope filtering works -- register a peer in a different directory, verify scope 'directory' excludes it while scope 'machine' includes it",
+        "All tests verify MCP response format: content array with a single text item",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "send_message tool tests",
+      "description": "As a developer, I want tests that verify the send_message tool correctly sends messages to other peers and handles error cases through the MCP protocol",
+      "acceptanceCriteria": [
+        "Test: Successfully sends a plain text message to a registered peer, response includes message ID and preview",
+        "Test: Sending to a nonexistent peer ID returns an error response (isError: true in MCP response)",
+        "Test: Sends a message with type: 'query' and metadata, verifiable by polling the recipient via broker HTTP API",
+        "Test: Sends a message with reply_to referencing an existing message ID",
+        "All tests verify MCP response content text format (message ID confirmation, error messages)",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "set_summary and set_name tool tests",
+      "description": "As a developer, I want tests that verify set_summary and set_name tools correctly update the peer's metadata so that other peers can see the updated information",
+      "acceptanceCriteria": [
+        "Test: set_summary updates the summary, verifiable by listing peers via broker HTTP API",
+        "Test: set_name updates the session name, verifiable by listing peers via broker HTTP API",
+        "Both tests verify the MCP response confirms the update (contains the set value in the response text)",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "check_messages tool tests",
+      "description": "As a developer, I want tests that verify the check_messages tool correctly retrieves and formats pending messages through the MCP protocol",
+      "acceptanceCriteria": [
+        "Test: check_messages returns 'No new messages.' when no messages are pending",
+        "Test: After sending a message to the MCP server's peer via broker HTTP API, check_messages returns the message with correct sender and content",
+        "Test: Message display includes type prefix for non-text types (e.g., [QUERY] for query type messages)",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "broadcast_message tool tests",
+      "description": "As a developer, I want tests that verify the broadcast_message tool correctly broadcasts to all peers in the specified scope",
+      "acceptanceCriteria": [
+        "Test: Broadcasts to machine scope, response indicates recipient count",
+        "Test: Broadcasts when no other peers exist, response indicates 0 recipients",
+        "Test: Broadcast messages are receivable by registered peers (verified by polling via broker HTTP API)",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Error handling edge cases",
+      "description": "As a developer, I want tests that verify the MCP server handles protocol-level errors correctly so that invalid tool calls produce clear error responses",
+      "acceptanceCriteria": [
+        "Test: Calling an unknown tool name via client.callTool produces an MCP error or returns an error response",
+        "Test: Calling send_message without required to_id parameter produces a meaningful error",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
