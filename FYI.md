@@ -1,5 +1,36 @@
 # FYI - claude-peers-mcp Decision Journal
 
+## 2026-03-24 - PAL Consensus + Local Verification: LAN Federation Architecture Validated
+### What: Multi-model consensus (4 frontier models) + 5 local Bun API smoke tests validated the federation architecture and identified PRD refinements
+### Why: Research-to-PRD Pipeline Phase 2 — validate architecture with external models before implementation
+### How: PAL consensus (frontier preset): Gemini 3.1 Pro (9/10), Claude Opus 4.6 (8/10), GLM-5 (8/10), Claude Sonnet 4.6 (8/10). GPT-5.4 and GPT-5.3 Codex hit OpenAI quota limits. Local smoke tests verified HMAC-SHA256, OpenSSL cert gen (RSA + Ed25519), Bun.serve() TLS, os.networkInterfaces(), WSL2 detection.
+### Impact: Architecture confirmed sound (avg 8.25/10). Key decisions and PRD refinements:
+
+**ACCEPTED (unanimous or strong consensus):**
+1. **Ed25519 over RSA-2048** for self-signed certs — faster (~1ms vs ~200ms), smaller, modern. Verified locally.
+2. **In-process federation** (second Bun.serve()) — correct for dev tool, simplicity wins
+3. **In-memory remote peers** — ephemeral state, never persisted to SQLite
+4. **Shared PSK for Phase A** + `CLAUDE_PEERS_FEDERATION_PSK` env var override for future separation
+5. **Colon separator** for hostname:peer_id — unambiguous (local IDs are alphanumeric)
+
+**PRD BUGS FOUND:**
+1. US-A12 auth confusion: Says federation endpoints need "bearer token AND PSK" — should be PSK only for remote, bearer only for localhost
+2. FR-5 routing ambiguity: `/federation/send-to-remote` endpoint undefined in US-A12
+3. HMAC canonicalization: `Object.keys().sort()` only sorts top-level keys — document this limitation or use recursive sort
+
+**IMPLEMENTATION GOTCHAS:**
+1. WSL2 subnet: `os.networkInterfaces()` returns 172.x.x.x (wrong) — use `ip route show default` as primary detection
+2. PID liveness check: Must bypass process.kill(pid,0) for remote from_ids
+3. Hostname: Normalize to lowercase, truncate >63 chars, reject colons at startup
+4. Federation startup: Wrap in try/catch for graceful degradation
+5. `fetch()` TLS: `tls: { rejectUnauthorized: false }` verified working in Bun (non-standard but functional)
+6. Tailscale interface: /32 routes need special handling in subnet detection
+
+**SKIPPED:**
+- Gemini's derived LAN PSK (SHA256(token+"LAN_FEDERATION")) — elegant but adds complexity for minimal gain in trusted LAN scenario. Override env var is simpler.
+
+### Related: PAL continuation_id: `435275f0-6c9c-4add-9992-3d08e68f021b`
+
 ## 2026-03-24 - Deep Research: LAN Discovery Prerequisites
 ### What: Iterative recursive deep research (breadth 4, depth 2) on Bun TLS, WSL2 mDNS, bonjour-service compatibility, self-signed cert generation, and federated broker patterns
 ### Why: PRD `tasks/prd-lan-discovery.md` explicitly requires deep research before implementation. Key unknowns: Can Bun serve TLS? Will mDNS work on WSL2? Can Bun generate self-signed certs?

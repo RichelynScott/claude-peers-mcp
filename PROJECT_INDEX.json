@@ -1,5 +1,5 @@
 {
-  "indexed_at": "2026-03-24T15:12:02.136242",
+  "indexed_at": "2026-03-24T17:00:04.431809",
   "root": ".",
   "project_structure": {
     "type": "tree",
@@ -52,18 +52,28 @@
       ],
       "architecture_hints": []
     },
+    "HANDOFF.md": {
+      "sections": [
+        "HANDOFF \u2014 claude-peers-mcp",
+        "IMMEDIATE NEXT ACTION",
+        "COMPLETED THIS SESSION",
+        "KEY FILES FOR CONTEXT",
+        "CRITICAL BEHAVIOR RULES"
+      ],
+      "architecture_hints": []
+    },
     "FYI.md": {
       "sections": [
         "FYI - claude-peers-mcp Decision Journal",
-        "2026-03-24 - Backlog-to-Ralph Pipeline: 6 PRDs + 5 prd.json created",
-        "What: Converted entire project backlog into Ralph-compatible PRDs using the Backlog-to-Ralph Pipeline workflow",
-        "Why: User wanted all backlog items addressed systematically with autonomous execution capability via Ralph",
-        "How: PAL Planner (Grok 4.20 + Gemini 3.1 Pro) analyzed backlog \u2192 tiered items (Ralph vs direct subagent) \u2192 mapped dependency graph \u2192 phased PRD creation via parallel subagents \u2192 Ralph prd.json conversion. Key decisions: (1) bundled structured messages + broadcast into one PRD (broadcast IS a message type), (2) deferred server.test.ts until after auth + structured messages to avoid testing moving API, (3) split auto-summary into CLI (this repo) + hook (~/.claude/) due to cross-directory concern, (4) LAN discovery converted Phase A only (manual federation), (5) hcom bridge + clink dual-bus too small for Ralph \u2192 direct subagent tasks.",
-        "Impact: 6 PRDs (2170+ lines total), 5 Ralph prd.json files (45 stories total), ready for phased autonomous execution. Workflow pattern documented and integrated into research-methodologies skill by ADD_MORE_2_CC session.",
-        "Related: `8f344b9` through `4b885be` (11 commits). PAL continuation_id: `0c4aa37b-6f43-4e16-bb9a-88265ae318a5`",
-        "2026-03-24 - Future: LAN cross-machine peer discovery",
-        "What: Investigate enabling Claude Code sessions on different machines to communicate over the same local network",
-        "Why: User and coworker (Rafi) are on the same LAN. Currently CPM only works on localhost (127.0.0.1). Cross-machine communication would enable real-time collaboration between their Claude Code sessions."
+        "2026-03-24 - PAL Consensus + Local Verification: LAN Federation Architecture Validated",
+        "What: Multi-model consensus (4 frontier models) + 5 local Bun API smoke tests validated the federation architecture and identified PRD refinements",
+        "Why: Research-to-PRD Pipeline Phase 2 \u2014 validate architecture with external models before implementation",
+        "How: PAL consensus (frontier preset): Gemini 3.1 Pro (9/10), Claude Opus 4.6 (8/10), GLM-5 (8/10), Claude Sonnet 4.6 (8/10). GPT-5.4 and GPT-5.3 Codex hit OpenAI quota limits. Local smoke tests verified HMAC-SHA256, OpenSSL cert gen (RSA + Ed25519), Bun.serve() TLS, os.networkInterfaces(), WSL2 detection.",
+        "Impact: Architecture confirmed sound (avg 8.25/10). Key decisions and PRD refinements:",
+        "Related: PAL continuation_id: `435275f0-6c9c-4add-9992-3d08e68f021b`",
+        "2026-03-24 - Deep Research: LAN Discovery Prerequisites",
+        "What: Iterative recursive deep research (breadth 4, depth 2) on Bun TLS, WSL2 mDNS, bonjour-service compatibility, self-signed cert generation, and federated broker patterns",
+        "Why: PRD `tasks/prd-lan-discovery.md` explicitly requires deep research before implementation. Key unknowns: Can Bun serve TLS? Will mDNS work on WSL2? Can Bun generate self-signed certs?"
       ],
       "architecture_hints": []
     },
@@ -134,6 +144,21 @@
       ],
       "architecture_hints": []
     },
+    "tasks/CHANGELOG-2026-03-24-for-rafi.md": {
+      "sections": [
+        "What Changed in Claude Peers Today (March 24, 2026)",
+        "What is Claude Peers?",
+        "New Features Added Today",
+        "1. Session Names",
+        "2. Security / Password Protection",
+        "3. Message Types",
+        "4. Broadcast Messages",
+        "5. Auto-Summary on Startup",
+        "6. Message Delivery Guarantee",
+        "7. Dead Session Detection"
+      ],
+      "architecture_hints": []
+    },
     "tasks/WORKFLOW-backlog-to-ralph-pipeline.md": {
       "sections": [
         "Workflow Pattern: Backlog-to-Ralph Pipeline",
@@ -176,6 +201,22 @@
         "US-004: set_summary and set_name tool tests"
       ],
       "architecture_hints": []
+    },
+    ".firecrawl/deep-research-lan-discovery.md": {
+      "sections": [
+        "Deep Research Report: LAN Cross-Machine Peer Discovery for claude-peers-mcp",
+        "Executive Summary",
+        "Detailed Findings",
+        "1. Bun TLS Server Capabilities",
+        "2. Self-Signed Certificate Generation"
+      ],
+      "architecture_hints": []
+    },
+    "../../.claude/projects/-home-riche-MCPs-claude-peers-mcp/memory/MEMORY.md": {
+      "sections": [
+        "Memory Index \u2014 claude-peers-mcp"
+      ],
+      "architecture_hints": []
     }
   },
   "directory_purposes": {
@@ -183,15 +224,15 @@
     "tasks/ralph": "Test files and test utilities"
   },
   "stats": {
-    "total_files": 17,
-    "total_directories": 27,
+    "total_files": 19,
+    "total_directories": 47,
     "fully_parsed": {
-      "typescript": 8
+      "typescript": 10
     },
     "listed_only": {
       "json": 9
     },
-    "markdown_files": 11
+    "markdown_files": 17
   },
   "files": {
     ".mcp.json": {
@@ -201,15 +242,25 @@
     "cli.ts": {
       "language": "typescript",
       "parsed": true,
+      "imports": [
+        "node:path",
+        "node:fs",
+        "./shared/token.ts"
+      ],
       "functions": {
         "brokerFetch": {
-          "signature": "async (path: string, body?: unknown): Promise<T>",
+          "signature": "async (fetchPath: string, body?: unknown): Promise<T>",
           "called_by": [
             "pollAndPushMessages",
             "main",
             "cleanup"
           ]
-        }
+        },
+        "getGitRepoName": "(cwd: string): string | null",
+        "getGitBranchName": "(cwd: string): string | null",
+        "getTaskMasterInProgress": "async (cwd: string): Promise<number | null>",
+        "buildSummary": "(opts: { repoName: string | null; branch: string | null; cwd: string; taskCount: number | null; }): string",
+        "resultPromise": "async (async (): Promise<number | null>"
       },
       "classes": {},
       "constants": {
@@ -217,8 +268,24 @@
         "BROKER_URL": "str"
       },
       "variables": [
+        "authToken",
         "opts",
         "res",
+        "proc",
+        "toplevel",
+        "branch",
+        "whichProc",
+        "timeoutPromise",
+        "resultPromise",
+        "text",
+        "code",
+        "trimmed",
+        "parsed",
+        "lines",
+        "l",
+        "result",
+        "hasGit",
+        "prefix",
         "cmd",
         "health",
         "peers",
@@ -226,10 +293,15 @@
         "parts",
         "toId",
         "msg",
-        "result",
+        "scope",
+        "cwd",
         "peerId",
         "name",
-        "proc",
+        "repoName",
+        "taskCount",
+        "summary",
+        "bytes",
+        "newToken",
         "pids"
       ],
       "call_graph": {}
@@ -238,14 +310,39 @@
       "language": "typescript",
       "parsed": true,
       "imports": [
-        "bun:sqlite"
+        "bun:sqlite",
+        "crypto",
+        "node:fs"
       ],
       "functions": {
         "brokerLog": {
           "signature": "(msg: string)",
           "called_by": [
-            "cleanDeliveredMessages"
+            "loadOrCreateToken",
+            "rereadToken",
+            "cleanDeliveredMessages",
+            "handleBroadcast"
           ]
+        },
+        "generateToken": {
+          "signature": "(): string",
+          "called_by": [
+            "loadOrCreateToken"
+          ]
+        },
+        "loadOrCreateToken": {
+          "calls": [
+            "brokerLog",
+            "generateToken"
+          ],
+          "signature": "(): string"
+        },
+        "isValidToken": "(provided: string, expected: string): boolean",
+        "rereadToken": {
+          "calls": [
+            "brokerLog"
+          ],
+          "signature": "(): void"
         },
         "cleanStalePeers": "()",
         "cleanDeliveredMessages": {
@@ -269,8 +366,20 @@
         "handleHeartbeat": "(body: HeartbeatRequest): void",
         "handleSetSummary": "(body: SetSummaryRequest): void",
         "handleSetName": "(body: SetNameRequest): void",
-        "handleListPeers": "(body: ListPeersRequest): Peer[]",
+        "handleListPeers": {
+          "signature": "(body: ListPeersRequest): Peer[]",
+          "called_by": [
+            "handleBroadcast"
+          ]
+        },
         "handleSendMessage": "(body: SendMessageRequest): ",
+        "handleBroadcast": {
+          "calls": [
+            "brokerLog",
+            "handleListPeers"
+          ],
+          "signature": "(body: BroadcastRequest): BroadcastResponse"
+        },
         "handlePollMessages": "(body: PollMessagesRequest): PollMessagesResponse",
         "handleAckMessages": "(body: AckMessagesRequest): void",
         "handleUnregister": "(body: { id: string }): void"
@@ -279,10 +388,16 @@
       "constants": {
         "PORT": "value",
         "DB_PATH": "value",
-        "LOG_DIR": "value"
+        "LOG_DIR": "value",
+        "TOKEN_PATH": "value",
+        "VALID_MESSAGE_TYPES": "value"
       },
       "variables": [
         "line",
+        "bytes",
+        "content",
+        "token",
+        "currentToken",
         "db",
         "peers",
         "insertPeer",
@@ -295,6 +410,7 @@
         "selectPeersByGitRoot",
         "insertMessage",
         "selectUndelivered",
+        "selectMessageExists",
         "markDelivered",
         "deleteDeliveredMessages",
         "result",
@@ -305,11 +421,17 @@
         "sessionName",
         "summary",
         "existing",
+        "type",
+        "totalSize",
+        "referenced",
         "target",
-        "messages",
+        "insertAll",
+        "rows",
         "rateLimits",
         "url",
         "path",
+        "authHeader",
+        "providedToken",
         "ip",
         "limit",
         "body",
@@ -333,9 +455,14 @@
         "post": {
           "signature": "async (path: string, body: Record<string, unknown> = {}): Promise<Response>",
           "called_by": [
-            "registerPeer"
+            "registerPeer",
+            "registerPeer",
+            "registerHelperPeer",
+            "getServerPeerId"
           ]
         },
+        "postNoAuth": "async (path: string, body: Record<string, unknown> = {}): Promise<Response>",
+        "postWithToken": "async (path: string, token: string, body: Record<string, unknown> = {}): Promise<Response>",
         "registerPeer": {
           "calls": [
             "post"
@@ -347,11 +474,13 @@
       "constants": {
         "TEST_PORT": "number",
         "TEST_DB": "str",
+        "TEST_TOKEN_PATH": "str",
         "BASE": "str"
       },
       "variables": [
         "res",
         "data",
+        "bytes",
         "ready",
         "i",
         "id1",
@@ -377,10 +506,42 @@
         "data2",
         "poll",
         "pollData",
+        "sendRes",
+        "sendData",
+        "pollRes",
+        "msg",
+        "metadata",
+        "sendA",
+        "dataA",
+        "sendB",
+        "dataB",
+        "replyMsg",
+        "pollRecv",
+        "pollRecvData",
+        "resB",
+        "resC",
+        "pollB",
+        "pollBData",
+        "msgB",
+        "pollC",
+        "pollCData",
+        "msgC",
+        "pollA",
+        "pollAData",
+        "msgA",
+        "resD",
+        "peerD",
+        "pollD",
+        "pollDData",
+        "msgD",
+        "resC2",
+        "resLonely",
+        "lonelyId",
+        "resC3",
+        "bigText",
         "text",
         "targetRes",
         "target",
-        "bigText",
         "got429",
         "results"
       ],
@@ -397,7 +558,8 @@
         "@modelcontextprotocol/sdk/server/index.js",
         "@modelcontextprotocol/sdk/server/stdio.js",
         "@modelcontextprotocol/sdk/types.js",
-        "./shared/summarize.ts"
+        "./shared/summarize.ts",
+        "./shared/token.ts"
       ],
       "functions": {
         "brokerFetch": {
@@ -490,8 +652,10 @@
         "TOOLS": "collection"
       },
       "variables": [
+        "authToken",
         "res",
         "err",
+        "retryRes",
         "proc",
         "i",
         "line",
@@ -510,11 +674,13 @@
         "logPath",
         "entry",
         "preview",
+        "prefix",
         "fromSummary",
         "fromCwd",
         "fromName",
         "sender",
         "senderLabel",
+        "typeTag",
         "bullets",
         "summaryLine",
         "logEntry",
@@ -530,10 +696,140 @@
       ],
       "call_graph": {}
     },
+    "cli.test.ts": {
+      "language": "typescript",
+      "parsed": true,
+      "purpose": "Test file",
+      "imports": [
+        "bun:test",
+        "node:fs",
+        "./cli.ts"
+      ],
+      "functions": {
+        "testEnv": "(): Record<string, string>",
+        "post": {
+          "signature": "async (path: string, body: Record<string, unknown> = {}): Promise<Response>",
+          "called_by": [
+            "registerPeer",
+            "registerPeer",
+            "registerHelperPeer",
+            "getServerPeerId"
+          ]
+        },
+        "registerPeer": {
+          "calls": [
+            "post"
+          ],
+          "signature": "async (overrides: Record<string, unknown> = {}): Promise<string>"
+        },
+        "runCli": "async (args: string[], opts: { cwd?: string } = {}): Promise<"
+      },
+      "classes": {},
+      "constants": {
+        "REPO_DIR": "str",
+        "TEST_PORT": "number",
+        "TEST_DB": "str",
+        "TEST_TOKEN_FILE": "str",
+        "BASE": "str",
+        "CLI_PATH": "str"
+      },
+      "variables": [
+        "result",
+        "res",
+        "data",
+        "proc",
+        "exitCode",
+        "bytes",
+        "ready",
+        "i",
+        "peerId",
+        "listRes",
+        "peers",
+        "peer"
+      ],
+      "call_graph": {}
+    },
     "index.ts": {
       "language": "typescript",
       "parsed": false,
       "purpose": "Application entry point"
+    },
+    "server.test.ts": {
+      "language": "typescript",
+      "parsed": true,
+      "purpose": "Test file",
+      "imports": [
+        "bun:test",
+        "@modelcontextprotocol/sdk/client/index.js",
+        "@modelcontextprotocol/sdk/client/stdio.js",
+        "node:fs",
+        "node:crypto"
+      ],
+      "functions": {
+        "post": {
+          "signature": "async (path: string, body: Record<string, unknown> = {})",
+          "called_by": [
+            "registerPeer",
+            "registerPeer",
+            "registerHelperPeer",
+            "getServerPeerId"
+          ]
+        },
+        "registerHelperPeer": {
+          "calls": [
+            "post"
+          ],
+          "signature": "async (overrides: Record<string, unknown> = {}): Promise<string>"
+        },
+        "resultText": "(result: Awaited<ReturnType<typeof client.callTool>>): string",
+        "getServerPeerId": {
+          "calls": [
+            "post"
+          ],
+          "signature": "async (): Promise<string>"
+        }
+      },
+      "classes": {},
+      "constants": {
+        "TEST_PORT": "number",
+        "TEST_DB": "str",
+        "TEST_TOKEN_PATH": "str",
+        "TEST_TOKEN": "value",
+        "BASE": "str",
+        "PROJECT_DIR": "str"
+      },
+      "variables": [
+        "res",
+        "content",
+        "peers",
+        "serverPeer",
+        "i",
+        "names",
+        "sendMsg",
+        "sendProps",
+        "broadcast",
+        "bcastProps",
+        "result",
+        "text",
+        "helperId",
+        "msgs",
+        "queryMsg",
+        "sendRes",
+        "originalMsgId",
+        "serverPeerId",
+        "pendingMsgs",
+        "attempt",
+        "drainMsgs",
+        "helperA",
+        "helperB",
+        "msgsA",
+        "bcastA",
+        "msgsB",
+        "bcastB",
+        "bcastMsg",
+        "isErr"
+      ],
+      "call_graph": {}
     },
     "tsconfig.json": {
       "language": "json",
@@ -609,11 +905,27 @@
     "tasks/ralph/prd-lan-discovery-phase-a.json": {
       "language": "json",
       "parsed": false
+    },
+    "../../../../tmp/test5-wsl2.ts": {
+      "language": "typescript",
+      "parsed": false,
+      "functions": {},
+      "classes": {},
+      "updated_by_hook": true,
+      "updated_at": "2026-03-24T17:22:03.342699",
+      "purpose": "Test file"
     }
   },
   "dependency_graph": {
+    "cli.ts": [
+      "node:path",
+      "node:fs",
+      "shared/token.ts"
+    ],
     "broker.ts": [
-      "bun:sqlite"
+      "bun:sqlite",
+      "crypto",
+      "node:fs"
     ],
     "broker.test.ts": [
       "bun:test",
@@ -623,11 +935,24 @@
       "@modelcontextprotocol/sdk/server/index.js",
       "@modelcontextprotocol/sdk/server/stdio.js",
       "@modelcontextprotocol/sdk/types.js",
-      "shared/summarize.ts"
+      "shared/summarize.ts",
+      "shared/token.ts"
+    ],
+    "cli.test.ts": [
+      "bun:test",
+      "node:fs",
+      "cli.ts"
+    ],
+    "server.test.ts": [
+      "bun:test",
+      "@modelcontextprotocol/sdk/client/index.js",
+      "@modelcontextprotocol/sdk/client/stdio.js",
+      "node:fs",
+      "node:crypto"
     ],
     "shared/token.ts": [
       "node:fs"
     ]
   },
-  "staleness_check": 1773774722.219161
+  "staleness_check": 1773781204.543356
 }
