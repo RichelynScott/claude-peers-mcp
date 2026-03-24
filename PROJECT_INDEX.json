@@ -1,5 +1,5 @@
 {
-  "indexed_at": "2026-03-24T13:06:23.740545",
+  "indexed_at": "2026-03-24T13:57:43.890066",
   "root": ".",
   "project_structure": {
     "type": "tree",
@@ -7,6 +7,9 @@
     "tree": [
       ".",
       "\u251c\u2500\u2500 app-logs/",
+      "\u251c\u2500\u2500 archive/",
+      "\u2502   \u2514\u2500\u2500 app-logs/",
+      "\u251c\u2500\u2500 cpm-logs/",
       "\u251c\u2500\u2500 docs/",
       "\u251c\u2500\u2500 logs/ (8 files)",
       "\u251c\u2500\u2500 shared/ (2 files)",
@@ -81,14 +84,14 @@
   "directory_purposes": {},
   "stats": {
     "total_files": 11,
-    "total_directories": 7,
+    "total_directories": 10,
     "fully_parsed": {
       "typescript": 7
     },
     "listed_only": {
       "json": 4
     },
-    "markdown_files": 7
+    "markdown_files": 4
   },
   "files": {
     ".mcp.json": {
@@ -134,8 +137,16 @@
     "broker.ts": {
       "language": "typescript",
       "parsed": true,
+      "imports": [
+        "bun:sqlite"
+      ],
       "functions": {
-        "brokerLog": "(msg: string)",
+        "brokerLog": {
+          "signature": "(msg: string)",
+          "called_by": [
+            "cleanDeliveredMessages"
+          ]
+        },
         "cleanStalePeers": "()",
         "cleanDeliveredMessages": {
           "calls": [
@@ -143,7 +154,12 @@
           ],
           "signature": "()"
         },
-        "generateId": "(): string",
+        "generateId": {
+          "signature": "(): string",
+          "called_by": [
+            "handleRegister"
+          ]
+        },
         "handleRegister": {
           "calls": [
             "generateId"
@@ -160,8 +176,46 @@
         "handleUnregister": "(body: { id: string }): void"
       },
       "classes": {},
-      "updated_by_hook": true,
-      "updated_at": "2026-03-24T13:07:16.136783"
+      "constants": {
+        "PORT": "value",
+        "DB_PATH": "value",
+        "LOG_DIR": "value"
+      },
+      "variables": [
+        "line",
+        "db",
+        "peers",
+        "insertPeer",
+        "updateLastSeen",
+        "updateSummary",
+        "updateName",
+        "deletePeer",
+        "selectAllPeers",
+        "selectPeersByDirectory",
+        "selectPeersByGitRoot",
+        "insertMessage",
+        "selectUndelivered",
+        "markDelivered",
+        "deleteDeliveredMessages",
+        "result",
+        "chars",
+        "id",
+        "i",
+        "now",
+        "sessionName",
+        "summary",
+        "existing",
+        "target",
+        "messages",
+        "rateLimits",
+        "url",
+        "path",
+        "ip",
+        "limit",
+        "body",
+        "msg"
+      ],
+      "call_graph": {}
     },
     "PROJECT_INDEX.json": {
       "language": "json",
@@ -239,19 +293,59 @@
     "server.ts": {
       "language": "typescript",
       "parsed": true,
+      "imports": [
+        "@modelcontextprotocol/sdk/server/index.js",
+        "@modelcontextprotocol/sdk/server/stdio.js",
+        "@modelcontextprotocol/sdk/types.js",
+        "./shared/summarize.ts"
+      ],
       "functions": {
-        "brokerFetch": "async (path: string, body: unknown): Promise<T>",
-        "isBrokerAlive": "async (): Promise<boolean>",
+        "brokerFetch": {
+          "signature": "async (path: string, body: unknown): Promise<T>",
+          "called_by": [
+            "pollAndPushMessages",
+            "main",
+            "cleanup"
+          ]
+        },
+        "isBrokerAlive": {
+          "signature": "async (): Promise<boolean>",
+          "called_by": [
+            "ensureBroker"
+          ]
+        },
         "ensureBroker": {
           "calls": [
             "isBrokerAlive",
             "log"
           ],
-          "signature": "async (): Promise<void>"
+          "signature": "async (): Promise<void>",
+          "called_by": [
+            "main"
+          ]
         },
-        "log": "(msg: string)",
-        "getGitRoot": "async (cwd: string): Promise<string | null>",
-        "getTty": "(): string | null",
+        "log": {
+          "signature": "(msg: string)",
+          "called_by": [
+            "ensureBroker",
+            "pollAndPushMessages",
+            "main",
+            "summaryPromise",
+            "cleanup"
+          ]
+        },
+        "getGitRoot": {
+          "signature": "async (cwd: string): Promise<string | null>",
+          "called_by": [
+            "main"
+          ]
+        },
+        "getTty": {
+          "signature": "(): string | null",
+          "called_by": [
+            "main"
+          ]
+        },
         "pollAndPushMessages": {
           "calls": [
             "brokerFetch",
@@ -284,8 +378,57 @@
         }
       },
       "classes": {},
-      "updated_by_hook": true,
-      "updated_at": "2026-03-24T13:07:24.677620"
+      "constants": {
+        "BROKER_PORT": "value",
+        "BROKER_URL": "str",
+        "POLL_INTERVAL_MS": "number",
+        "HEARTBEAT_INTERVAL_MS": "value",
+        "BROKER_SCRIPT": "value",
+        "CPM_LOG_DIR": "value",
+        "MSG_LOG_PATH": "str",
+        "SERVER_LOG_PATH": "str",
+        "TOOLS": "collection"
+      },
+      "variables": [
+        "res",
+        "err",
+        "proc",
+        "i",
+        "line",
+        "text",
+        "code",
+        "ppid",
+        "tty",
+        "myCwd",
+        "mcp",
+        "scope",
+        "peers",
+        "lines",
+        "parts",
+        "result",
+        "timestamp",
+        "logPath",
+        "entry",
+        "preview",
+        "fromSummary",
+        "fromCwd",
+        "fromName",
+        "sender",
+        "senderLabel",
+        "bullets",
+        "summaryLine",
+        "logEntry",
+        "initialSummary",
+        "summaryPromise",
+        "branch",
+        "recentFiles",
+        "summary",
+        "reg",
+        "pollTimer",
+        "heartbeatTimer",
+        "cleanup"
+      ],
+      "call_graph": {}
     },
     "index.ts": {
       "language": "typescript",
@@ -344,5 +487,5 @@
       "shared/summarize.ts"
     ]
   },
-  "staleness_check": 1773767183.799689
+  "staleness_check": 1773770263.973191
 }
