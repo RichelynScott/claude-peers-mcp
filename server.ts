@@ -301,7 +301,7 @@ const TOOLS = [
   {
     name: "broadcast_message",
     description:
-      "Send a message to all Claude Code instances in a scope (machine, directory, or repo). Useful for announcements, help requests, or coordination.",
+      "Send a message to all Claude Code instances in a scope (machine, directory, repo, or lan). Useful for announcements, help requests, or coordination. Use 'lan' to broadcast to peers on other machines via federation.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -311,8 +311,8 @@ const TOOLS = [
         },
         scope: {
           type: "string" as const,
-          enum: ["machine", "directory", "repo"],
-          description: 'Scope of broadcast. "machine" = all instances. "directory" = same working directory. "repo" = same git repository.',
+          enum: ["machine", "directory", "repo", "lan"],
+          description: 'Scope of broadcast. "machine" = all instances. "directory" = same working directory. "repo" = same git repository. "lan" = all instances on this machine plus peers on connected LAN machines (requires federation).',
         },
       },
       required: ["message", "scope"],
@@ -565,7 +565,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
 
     case "broadcast_message": {
-      const { message, scope } = args as { message: string; scope: "machine" | "directory" | "repo" };
+      const { message, scope } = args as { message: string; scope: "machine" | "directory" | "repo" | "lan" };
       if (!myId) {
         return {
           content: [{ type: "text" as const, text: "Not registered with broker yet" }],

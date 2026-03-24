@@ -76,14 +76,19 @@ export async function ensureTlsCert(
 
 /**
  * Sign a message body with HMAC-SHA256.
- * Canonical JSON: Object.keys().sort() for top-level keys only.
- * NOTE: This only sorts top-level keys. Nested objects (like metadata) are
- * serialized as-is. This is acceptable because FederationRelayRequest has a
- * flat structure — the only nested field (metadata) has order-insensitive semantics.
+ * Canonical JSON: sorted top-level keys, nested structures preserved.
+ *
+ * IMPORTANT: We build a new object with sorted top-level keys rather than using
+ * JSON.stringify's replacer array. The replacer array acts as a whitelist that
+ * STRIPS all nested object keys (e.g., metadata always becomes `{}`).
+ * Verified: `JSON.stringify({a:1, b:{x:2}}, ["a","b"])` → `{"a":1,"b":{}}`
  */
 export function signMessage(body: Record<string, unknown>, psk: string): string {
-  const canonical = JSON.stringify(body, Object.keys(body).sort());
-  return createHmac("sha256", psk).update(canonical).digest("hex");
+  const canonicalObj: Record<string, unknown> = {};
+  for (const key of Object.keys(body).sort()) {
+    canonicalObj[key] = body[key];
+  }
+  return createHmac("sha256", psk).update(JSON.stringify(canonicalObj)).digest("hex");
 }
 
 /**

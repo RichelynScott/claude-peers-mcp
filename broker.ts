@@ -420,7 +420,7 @@ function handleSendMessage(body: SendMessageRequest): { ok: boolean; error?: str
   return { ok: true, message_id: Number(result.lastInsertRowid) };
 }
 
-function handleBroadcast(body: BroadcastRequest): BroadcastResponse {
+async function handleBroadcast(body: BroadcastRequest): Promise<BroadcastResponse> {
   // Validate type if provided
   const type: MessageType = (body.type ?? "broadcast") as MessageType;
   if (!VALID_MESSAGE_TYPES.has(type)) {
@@ -457,20 +457,50 @@ function handleBroadcast(body: BroadcastRequest): BroadcastResponse {
   const now = new Date().toISOString();
   const messageIds: number[] = [];
 
-  // Atomic: all messages inserted in one transaction
-  const insertAll = db.transaction(() => {
-    for (const peer of peers) {
-      const result = insertMessage.run(
-        body.from_id, peer.id, body.text, type,
-        metadataStr, null, now
-      );
-      messageIds.push(Number(result.lastInsertRowid));
-    }
-  });
-  insertAll();
+  // Separate local peers (have real PIDs) from remote peers (pid === 0, ID contains ":")
+  const localPeers = peers.filter((p) => !p.id.includes(":"));
+  const remotePeers = peers.filter((p) => p.id.includes(":"));
 
-  brokerLog(`broadcast from ${body.from_id} to ${peers.length} peer(s) in scope ${body.scope}`);
-  return { ok: true, recipients: peers.length, message_ids: messageIds };
+  // Insert messages for local peers atomically
+  if (localPeers.length > 0) {
+    const insertAll = db.transaction(() => {
+      for (const peer of localPeers) {
+        const result = insertMessage.run(
+          body.from_id, peer.id, body.text, type,
+          metadataStr, null, now
+        );
+        messageIds.push(Number(result.lastInsertRowid));
+      }
+    });
+    insertAll();
+  }
+
+  // Relay broadcast to remote peers via federation (FR-11: LAN broadcast)
+  if (remotePeers.length > 0 && FEDERATION_ENABLED) {
+    const relayPromises = remotePeers.map(async (peer) => {
+      try {
+        const result = await handleFederationSendToRemote({
+          to_id: peer.id,
+          from_id: body.from_id,
+          text: body.text,
+          type,
+          metadata: body.metadata as Record<string, unknown> | undefined,
+        });
+        if (result.ok) {
+          messageIds.push(-1); // Remote — no local message ID
+        } else {
+          brokerLog(`broadcast relay to ${peer.id} failed: ${result.error}`);
+        }
+      } catch (err) {
+        brokerLog(`broadcast relay to ${peer.id} error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    });
+    await Promise.allSettled(relayPromises);
+  }
+
+  const totalRecipients = localPeers.length + remotePeers.length;
+  brokerLog(`broadcast from ${body.from_id} to ${totalRecipients} peer(s) in scope ${body.scope} (${localPeers.length} local, ${remotePeers.length} remote)`);
+  return { ok: true, recipients: totalRecipients, message_ids: messageIds };
 }
 
 function handlePollMessages(body: PollMessagesRequest): PollMessagesResponse {
@@ -596,7 +626,7 @@ Bun.serve({
         case "/send-message":
           return Response.json(handleSendMessage(body as SendMessageRequest));
         case "/broadcast":
-          return Response.json(handleBroadcast(body as BroadcastRequest));
+          return Response.json(await handleBroadcast(body as BroadcastRequest));
         case "/poll-messages":
           return Response.json(handlePollMessages(body as PollMessagesRequest));
         case "/ack-messages":
@@ -870,16 +900,14 @@ async function syncRemotePeers(): Promise<void> {
 
 // --- Federation TLS server (US-003, US-004, US-006) ---
 
-async function handleFederationRequest(req: Request): Promise<Response> {
+async function handleFederationRequest(req: Request, server: any): Promise<Response> {
   const url = new URL(req.url);
   const path = url.pathname;
 
-  // US-004: Subnet restriction — check remote IP against allowed subnet
-  // Bun provides the remote address via the server's requestIP() — but we access it via headers
-  // For Bun.serve with TLS, we need to check the connecting IP
-  const remoteIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
-    ?? (req as unknown as { remoteAddress?: string }).remoteAddress
-    ?? "0.0.0.0";
+  // US-004: Subnet restriction — use Bun's server.requestIP() for the real socket address.
+  // SECURITY: Never trust X-Forwarded-For — an attacker can inject it to bypass subnet checks.
+  const socketAddr = server.requestIP(req);
+  const remoteIp = socketAddr?.address ?? "0.0.0.0";
 
   // Strip IPv6-mapped IPv4 prefix if present (e.g., "::ffff:192.168.1.5" -> "192.168.1.5")
   const cleanIp = remoteIp.startsWith("::ffff:") ? remoteIp.slice(7) : remoteIp;
@@ -1010,7 +1038,7 @@ if (FEDERATION_ENABLED) {
           cert: Bun.file(certPath),
           key: Bun.file(keyPath),
         },
-        fetch: handleFederationRequest,
+        fetch(req, server) { return handleFederationRequest(req, server); },
       });
 
       federationLog(`Listening on 0.0.0.0:${FEDERATION_PORT} (TLS) — hostname: ${federationHostname}`);

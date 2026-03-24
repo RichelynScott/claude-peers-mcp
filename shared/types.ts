@@ -79,7 +79,7 @@ export interface BroadcastRequest {
   text: string;
   type?: MessageType;
   metadata?: Record<string, unknown>;
-  scope: "machine" | "directory" | "repo";
+  scope: "machine" | "directory" | "repo" | "lan";
   cwd: string;
   git_root: string | null;
 }

@@ -675,6 +675,42 @@ describe("HMAC Signing", () => {
     expect(signMessage(body1, "key")).toBe(signMessage(body2, "key"));
   });
 
+  it("22. signMessage preserves nested object contents (not stripped by replacer)", () => {
+    // Regression test: JSON.stringify(body, arrayReplacer) strips nested keys.
+    // signMessage must preserve nested objects like metadata.
+    const body = {
+      from_id: "host:peer1",
+      metadata: { task: "build feature", files: ["/a.ts", "/b.ts"] },
+      text: "hello",
+      to_id: "local1",
+      type: "handoff",
+    };
+
+    const sig = signMessage(body, "secret");
+    // Verify the signature is stable and based on full content
+    expect(signMessage(body, "secret")).toBe(sig);
+
+    // A body with different metadata should produce a DIFFERENT signature
+    const bodyDiffMeta = { ...body, metadata: { task: "different task" } };
+    expect(signMessage(bodyDiffMeta, "secret")).not.toBe(sig);
+
+    // A body with empty metadata should also differ
+    const bodyEmptyMeta = { ...body, metadata: {} };
+    expect(signMessage(bodyEmptyMeta, "secret")).not.toBe(sig);
+
+    // Verify the signature matches what we'd expect from manually sorted keys
+    const manualCanonical = JSON.stringify({
+      from_id: body.from_id,
+      metadata: body.metadata,
+      text: body.text,
+      to_id: body.to_id,
+      type: body.type,
+    });
+    const { createHmac } = require("node:crypto");
+    const expected = createHmac("sha256", "secret").update(manualCanonical).digest("hex");
+    expect(sig).toBe(expected);
+  });
+
   it("21. getMachineHostname returns a lowercase string under 64 chars", () => {
     const h = getMachineHostname();
     expect(typeof h).toBe("string");
