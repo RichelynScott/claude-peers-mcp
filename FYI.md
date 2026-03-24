@@ -1,5 +1,12 @@
 # FYI - claude-peers-mcp Decision Journal
 
+## 2026-03-24 - Future: LAN cross-machine peer discovery
+### What: Investigate enabling Claude Code sessions on different machines to communicate over the same local network
+### Why: User and coworker (Rafi) are on the same LAN. Currently CPM only works on localhost (127.0.0.1). Cross-machine communication would enable real-time collaboration between their Claude Code sessions.
+### How: TBD — needs research. Key considerations: (1) broker would need to bind to LAN IP instead of 127.0.0.1, (2) mDNS/Bonjour for auto-discovery vs manual IP config, (3) authentication is critical — shared secret token, mTLS, or pre-shared key, (4) encryption — TLS required for any non-localhost traffic, (5) firewall rules, (6) message signing to prevent spoofing. Security-first design: restrict to same subnet, require mutual auth, encrypt all traffic.
+### Impact: Would transform CPM from single-machine tool to team collaboration backbone
+### Related: Consult PAL MCP (Grok 4.20 + Gemini) for security architecture before implementation
+
 ## 2026-03-24 - Two-phase message delivery + liveness check
 ### What: Replaced at-most-once delivery with at-least-once via two-phase poll+ack. Added PID liveness check on send.
 ### Why: Messages were silently lost if channel notification failed after broker marked them delivered. User experienced "sent but never received" limbo. Grok 4.20 Reasoning (via PAL thinkdeep) recommended this over a 2s blocking wait approach.
