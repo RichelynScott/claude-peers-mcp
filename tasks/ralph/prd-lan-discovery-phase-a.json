@@ -1,0 +1,246 @@
+{
+  "project": "claude-peers-mcp",
+  "branchName": "ralph/lan-federation-phase-a",
+  "description": "Phase A of 3: Manual LAN federation for claude-peers-mcp. Enables Claude Code sessions on different LAN machines to discover each other and exchange messages by manually connecting federation agents via IP address. Includes TLS-encrypted communication, PSK authentication, HMAC message signing, subnet restriction, peer list sync, cross-machine message relay, and CLI commands. Assumes broker auth (prd-broker-auth.md) and structured messages (prd-structured-messages.md) are already implemented. Phases B (mDNS auto-discovery) and C (WSL2/macOS docs) have separate prd.json files to be created later.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Federation TypeScript types",
+      "description": "As a developer, I want shared TypeScript types for the federation layer so that all federation modules have a consistent, type-safe contract.",
+      "acceptanceCriteria": [
+        "FederationConfig interface added to shared/types.ts with fields: enabled (boolean), port (number), subnet (string CIDR), certPath (string), keyPath (string)",
+        "RemotePeer interface added with fields: id (string, hostname:original_id), machine (string), cwd (string), git_root (string | null), session_name (string), summary (string), last_seen (string ISO timestamp)",
+        "FederationHandshakeRequest interface added with fields: psk (string), hostname (string), version (string)",
+        "FederationRelayRequest interface added with fields: from_id (string), from_machine (string), to_id (string), text (string), type (optional string), metadata (optional Record), reply_to (optional number), signature (string HMAC-SHA256)",
+        "FederationPeersResponse interface added with fields: hostname (string), peers (Peer[])",
+        "ListPeersRequest.scope extended to include 'lan' as a valid value",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Auto-generate self-signed TLS certificate",
+      "description": "As a user starting federation for the first time, I want a TLS certificate to be auto-generated so that encrypted communication works without manual PKI setup.",
+      "acceptanceCriteria": [
+        "New file federation.ts created with cert generation functions",
+        "On first federation startup, if no cert/key files exist at configured paths, generate a self-signed X.509 certificate with RSA 2048-bit (or Ed25519) key via shelling out to openssl",
+        "Default paths: ~/.claude-peers-federation.crt and ~/.claude-peers-federation.key",
+        "Configurable via CLAUDE_PEERS_FEDERATION_CERT and CLAUDE_PEERS_FEDERATION_KEY env vars",
+        "Certificate Subject CN set to machine hostname, validity 365 days",
+        "Key file written with mode 0600",
+        "If cert/key already exist, they are loaded without regeneration",
+        "Logs: '[CPM-federation] TLS cert loaded from <path>' (never logs key material)",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Enable federation on a machine",
+      "description": "As a user, I want to enable federation via environment variable so that my broker participates in LAN peer networking.",
+      "acceptanceCriteria": [
+        "Setting CLAUDE_PEERS_FEDERATION_ENABLED=true causes the federation agent to start alongside the broker in broker.ts",
+        "When federation is disabled (default: false), no LAN-facing port is opened, no federation code executes, and existing behavior is identical to pre-federation",
+        "Federation agent starts a TLS server on the port specified by CLAUDE_PEERS_FEDERATION_PORT (default: 7900) using Bun.serve() with tls option",
+        "Federation agent binds to 0.0.0.0 (all interfaces) to accept LAN connections",
+        "On startup, federation agent logs: '[CPM-federation] Listening on 0.0.0.0:<port> (TLS)'",
+        "On startup with federation disabled, no federation log lines are emitted",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Subnet restriction for federation connections",
+      "description": "As a security-conscious user, I want federation to only accept connections from my local subnet so that machines outside my trusted network cannot connect.",
+      "acceptanceCriteria": [
+        "CLAUDE_PEERS_FEDERATION_SUBNET env var specifies allowed CIDR (e.g., 192.168.1.0/24)",
+        "Default: auto-detect the local machine's /24 subnet from the primary network interface",
+        "Incoming TLS connections from IPs outside the allowed subnet are immediately rejected before handshake",
+        "Federation agent logs rejected connections: '[CPM-federation] Rejected connection from <ip> (outside subnet <cidr>)'",
+        "Outgoing connections (via federation connect) also verify the target IP is within the allowed subnet",
+        "Subnet check uses standard CIDR bitmasking, supports both /24 and arbitrary prefix lengths",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "HMAC-SHA256 message signing for federation relay",
+      "description": "As a security-conscious user, I want all federation messages to be signed so that tampering is detected even if TLS is somehow compromised.",
+      "acceptanceCriteria": [
+        "signMessage(body, psk) function computes HMAC-SHA256 of canonical JSON (keys sorted) keyed with PSK",
+        "verifySignature(body, signature, psk) validates HMAC using crypto.timingSafeEqual() for constant-time comparison",
+        "Every message relayed via /federation/relay must include X-Message-Signature header",
+        "Receiving federation agent validates HMAC before accepting; invalid signatures return { error: 'Invalid message signature' } with HTTP 403",
+        "Messages without signatures are rejected with { error: 'Missing message signature' } with HTTP 403",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Federation broker endpoints",
+      "description": "As a developer building the federation layer, I want the local broker to expose federation-specific endpoints so that the federation agent can query local state and deliver remote messages.",
+      "acceptanceCriteria": [
+        "New broker endpoint POST /federation/peers returns all local peers (same data as /list-peers scope=machine) for federation sync, requires PSK auth via X-Claude-Peers-PSK header",
+        "New broker endpoint POST /federation/relay accepts { from_id, from_machine, to_id, text, type?, metadata?, reply_to? }, validates to_id exists locally, inserts message into local messages table, requires PSK auth",
+        "Federation endpoints are NOT rate-limited (federation agent is trusted)",
+        "Federation endpoints require both bearer token auth AND PSK validation",
+        "Federation endpoints return 404 if federation is not enabled on this broker (CLAUDE_PEERS_FEDERATION_ENABLED is not true)",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Connect to a remote federation agent by IP",
+      "description": "As a user, I want to manually connect to a peer machine's federation agent by IP address so that our brokers can share peer lists and route messages.",
+      "acceptanceCriteria": [
+        "New CLI command: bun cli.ts federation connect <host>:<port>",
+        "Local federation agent initiates a TLS connection to remote host:port",
+        "On TLS handshake, sends PSK from ~/.claude-peers-token in X-Claude-Peers-PSK header via HTTP POST to remote /federation/handshake",
+        "Remote agent validates PSK using crypto.timingSafeEqual(); mismatch returns { error: 'PSK mismatch' } and closes connection",
+        "If PSK matches, both sides store each other as a federated peer (in-memory, not persisted to SQLite)",
+        "CLI prints: 'Connected to <host>:<port> (<remote_hostname>). <N> remote peers available.'",
+        "If connection fails (network error, PSK mismatch, TLS error), CLI prints a clear error message",
+        "Connection timeout: 5 seconds",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Disconnect from a remote federation agent",
+      "description": "As a user, I want to disconnect from a specific remote federation agent so that I can control which machines are in my peer network.",
+      "acceptanceCriteria": [
+        "New CLI command: bun cli.ts federation disconnect <host>:<port>",
+        "Removes the remote from the federated peers list",
+        "Closes the TLS connection to that remote",
+        "Remote peers from that machine are removed from list_peers(scope='lan') results",
+        "CLI prints: 'Disconnected from <host>:<port>.'",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "Periodic peer list sync with remote brokers",
+      "description": "As a connected federation agent, I want to periodically sync peer lists with remote brokers so that new sessions on remote machines are discovered automatically.",
+      "acceptanceCriteria": [
+        "Every 30 seconds (configurable), federation agent fetches peer list from each connected remote via POST /federation/peers",
+        "Remote peers stored in an in-memory map keyed by <remote_host>:<remote_port>:<peer_id>",
+        "Remote peers include a machine field containing the remote hostname (or IP if hostname unavailable)",
+        "Stale remote peers (from a remote that hasn't synced in 90 seconds) are automatically removed",
+        "Local peers remain managed by the local broker (SQLite); remote peers are never written to the local SQLite database",
+        "Peer list sync requests are authenticated with PSK (same as handshake)",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "List peers with LAN scope",
+      "description": "As a Claude Code session, I want to list peers across the LAN so that I can discover sessions on other machines.",
+      "acceptanceCriteria": [
+        "list_peers MCP tool gains new scope value 'lan'",
+        "When scope='lan', tool returns both local peers (from local broker) and remote peers (from federation agent in-memory cache)",
+        "Remote peers are distinguished with [REMOTE:<hostname>] prefix on first line of each entry",
+        "Remote peers include: ID (prefixed with hostname, e.g., rafi-mac:a1b2c3d4), CWD, git_root, session_name, summary, last_seen, machine hostname",
+        "Remote peers do NOT include PID or TTY (not meaningful across machines)",
+        "When federation is disabled, scope='lan' returns error: 'Federation is not enabled. Set CLAUDE_PEERS_FEDERATION_ENABLED=true to use LAN scope.'",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "Send message to a remote peer",
+      "description": "As a Claude Code session, I want to send a message to a peer on another machine so that I can collaborate across machines.",
+      "acceptanceCriteria": [
+        "send_message in server.ts transparently detects remote peer IDs (those with hostname prefix containing colon, e.g., rafi-mac:b2c3d4e5)",
+        "For remote peers, MCP server routes message through federation agent via local broker POST /federation/send-to-remote instead of direct local send",
+        "Federation agent forwards message to correct remote federation agent via POST /federation/relay (TLS, PSK-authenticated, HMAC-signed)",
+        "Remote federation agent delivers message to its local broker via POST /send-message (localhost, bearer token)",
+        "Remote peer receives message via normal polling/channel push mechanism (no changes to recipient-side delivery)",
+        "Cross-machine messages include from_machine in the channel notification meta",
+        "If remote federation agent is unreachable, send_message returns error: 'Remote machine <hostname> is unreachable'",
+        "Message size limit (10KB) is enforced locally before relaying",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "title": "Federation status CLI command",
+      "description": "As a user, I want to see the current federation status so that I know which machines are connected and how many remote peers are available.",
+      "acceptanceCriteria": [
+        "New CLI command: bun cli.ts federation status",
+        "Displays: federation enabled/disabled, listening port, connected remotes (host, port, hostname, remote peer count, connection uptime), total remote peers",
+        "If federation is disabled, prints: 'Federation is disabled. Set CLAUDE_PEERS_FEDERATION_ENABLED=true to enable.'",
+        "If federation is enabled but no remotes connected, prints: 'Federation enabled on port <port>. No remote machines connected.'",
+        "Typecheck passes"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "Federation agent test suite",
+      "description": "As a developer, I want comprehensive tests for the federation agent so that LAN networking regressions are caught early.",
+      "acceptanceCriteria": [
+        "New test file: federation.test.ts",
+        "Test: federation agent starts TLS server on configured port",
+        "Test: /federation/handshake with correct PSK returns success",
+        "Test: /federation/handshake with wrong PSK returns error",
+        "Test: /federation/peers returns local peer list (authenticated)",
+        "Test: /federation/peers without PSK auth returns error",
+        "Test: /federation/relay delivers message to local broker",
+        "Test: /federation/relay with invalid HMAC signature is rejected",
+        "Test: /federation/relay without signature is rejected",
+        "Test: connection from outside allowed subnet is rejected",
+        "Test: peer list sync populates remote peer cache",
+        "Test: stale remote peers are cleaned up after 90 seconds",
+        "Test: remote peer IDs are prefixed with machine hostname",
+        "All tests use temporary TLS certs, temp DB, temp token file (same pattern as broker.test.ts)",
+        "Tests spin up two federation agents to test bidirectional communication",
+        "Minimum 12 tests",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
