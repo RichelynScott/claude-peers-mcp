@@ -1,0 +1,147 @@
+{
+  "project": "claude-peers-mcp",
+  "branchName": "ralph/broker-auth",
+  "description": "Add bearer-token authentication to the claude-peers broker daemon. Auto-generates a shared token at ~/.claude-peers-token on first start, requires Authorization header on all POST endpoints (except /health), supports token rotation via CLI and 60s periodic re-read, and updates all existing tests plus adds new auth-specific tests.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Auto-generated token on first broker start",
+      "description": "As a user starting claude-peers for the first time, I want the broker to automatically create a secure token file so that authentication works without any manual setup.",
+      "acceptanceCriteria": [
+        "On startup, broker checks for token file at path from CLAUDE_PEERS_TOKEN env var (default: ~/.claude-peers-token)",
+        "If file does not exist, broker generates 32 cryptographically random bytes via crypto.getRandomValues(), hex-encodes them (64-char string), writes to token file with mode 0600",
+        "If file already exists, broker reads the token from it (trimming whitespace/newlines)",
+        "Broker logs '[CPM-broker] Token loaded from <path>' (never logs the token value itself)",
+        "Token file contains only the hex string (no JSON, no headers, no newlines except optional trailing)",
+        "Token generation/loading runs before database setup and HTTP server start",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Broker rejects unauthenticated requests",
+      "description": "As a security-conscious operator, I want the broker to reject any request without a valid token so that only authorized processes can interact with the peer network.",
+      "acceptanceCriteria": [
+        "All POST endpoints require Authorization: Bearer <token> header",
+        "GET /health remains unauthenticated (needed for liveness probes)",
+        "Missing Authorization header returns HTTP 401 with body { \"error\": \"Unauthorized\" }",
+        "Invalid/wrong token returns HTTP 401 with body { \"error\": \"Unauthorized\" } (no information leakage)",
+        "Auth check runs BEFORE rate limiting and request body parsing (fail fast)",
+        "Token comparison uses crypto.timingSafeEqual() to prevent timing attacks",
+        "Non-POST requests to non-/health paths remain unauthenticated (they return static text and expose no data)",
+        "A 401 rejection does NOT count against the rate limit",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "MCP server reads token and authenticates with broker",
+      "description": "As a Claude Code MCP server instance, I want to automatically read the token and include it in all broker requests so that authentication is transparent to the Claude Code user.",
+      "acceptanceCriteria": [
+        "Create shared/token.ts (~20 lines) with TOKEN_PATH constant and readTokenSync() function using Bun.file / fs.readFileSync",
+        "On startup in main(), server.ts reads token via shared/token.ts from CLAUDE_PEERS_TOKEN env var path (default: ~/.claude-peers-token)",
+        "Token is stored in a module-level variable and included as Authorization: Bearer <token> in every brokerFetch() call",
+        "If token file does not exist at startup, server.ts logs 'Fatal: Token file not found at <path>. Is the broker running?' and exits with code 1",
+        "If brokerFetch() receives HTTP 401, the server re-reads the token file (handles rotation) and retries the request once; if retry also fails, it throws the original error",
+        "The isBrokerAlive() function (GET /health) does NOT send the token",
+        "ensureBroker() is unchanged (it uses unauthenticated /health)",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "This story creates the shared/token.ts helper used by both server.ts and cli.ts."
+    },
+    {
+      "id": "US-004",
+      "title": "CLI reads token and authenticates with broker",
+      "description": "As a CLI user, I want bun cli.ts commands to automatically authenticate with the broker so that I can manage peers without manual token handling.",
+      "acceptanceCriteria": [
+        "On startup, cli.ts reads token via shared/token.ts from CLAUDE_PEERS_TOKEN env var path (default: ~/.claude-peers-token)",
+        "Token is included as Authorization: Bearer <token> in every brokerFetch() call (both POST and GET-with-auth paths)",
+        "If token file does not exist, CLI prints 'Error: Token file not found at <path>. Is the broker running?' and exits with code 1",
+        "bun cli.ts status works (calls both unauthenticated /health and authenticated /list-peers)",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "Depends on shared/token.ts created in US-003."
+    },
+    {
+      "id": "US-005",
+      "title": "Token rotation via CLI command",
+      "description": "As an operator, I want to rotate the broker token via CLI command so that I can invalidate a potentially compromised token.",
+      "acceptanceCriteria": [
+        "New CLI command: bun cli.ts rotate-token",
+        "Generates 32 cryptographically random bytes via crypto.getRandomValues(), hex-encodes to 64-char string",
+        "Writes new token to the token file path (same path broker reads from) with mode 0600",
+        "Prints: 'Token rotated. New token written to <path>. Broker will pick it up within 60 seconds.'",
+        "Does NOT call any broker endpoint (rotation is file-based)",
+        "Does not require the broker to be running",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Broker re-reads token periodically and on SIGHUP",
+      "description": "As an operator who has rotated the token, I want the broker to pick up the new token without a restart so that connected sessions can seamlessly re-authenticate.",
+      "acceptanceCriteria": [
+        "Broker re-reads the token file every 60 seconds on an interval timer",
+        "If file contents changed, broker updates its in-memory token and logs: '[CPM-broker] Token reloaded from <path>'",
+        "If file is missing during re-read, broker keeps previous token and logs: '[CPM-broker] Warning: Token file missing at <path>, keeping previous token'",
+        "Broker re-reads on SIGHUP signal for immediate rotation (additive handler, does not replace SIGINT/SIGTERM handlers)",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Update existing 19 tests with authentication",
+      "description": "As a developer, I want all 19 existing broker tests to pass with authentication enabled so that the test suite validates the authenticated broker.",
+      "acceptanceCriteria": [
+        "Test beforeAll generates a random test token file at a temp path (use crypto.randomUUID() suffix for uniqueness)",
+        "Broker test process is started with CLAUDE_PEERS_TOKEN env var pointing to the temp token file",
+        "The post() helper function includes Authorization: Bearer <token> header in all requests",
+        "The /health GET test does NOT include the Authorization header",
+        "Test afterAll cleans up the temp token file",
+        "All 19 existing tests pass without logic changes (only header additions and setup/teardown changes)",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "Mechanical change: modify post() helper + beforeAll/afterAll. All 19 tests should pass with only header changes since the auth middleware is transparent once the correct header is present."
+    },
+    {
+      "id": "US-008",
+      "title": "New auth-specific tests",
+      "description": "As a developer, I want dedicated tests for authentication behavior so that regressions are caught early.",
+      "acceptanceCriteria": [
+        "Test: POST to /register without Authorization header returns 401",
+        "Test: POST to /register with wrong token returns 401",
+        "Test: POST to /register with correct token returns 200",
+        "Test: GET /health without Authorization header returns 200 (exempt)",
+        "Test: POST to /send-message without Authorization header returns 401",
+        "All auth tests are in a new describe('Authentication') block placed AFTER Health tests and BEFORE Registration tests",
+        "Total test count is 19 existing + at least 5 new auth tests = 24+ tests",
+        "Tests pass",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}
