@@ -1,7 +1,7 @@
 {
   "project": "claude-peers-mcp",
   "branchName": "ralph/lan-federation-phase-a",
-  "description": "Phase A of 3: Manual LAN federation for claude-peers-mcp. Enables Claude Code sessions on different LAN machines to discover each other and exchange messages by manually connecting federation agents via IP address. Includes TLS-encrypted communication (Ed25519), PSK authentication, HMAC message signing, subnet restriction, peer list sync, cross-machine message relay, and CLI commands. Assumes broker auth (prd-broker-auth.md) and structured messages (prd-structured-messages.md) are already implemented. BUG FIXES applied from PAL consensus (continuation_id: 435275f0): (1) federation endpoints use PSK only, not bearer+PSK, (2) remote send uses in-process function call, not /federation/send-to-remote, (3) HMAC canonicalization limitation documented.",
+  "description": "Phase A of 3: Manual LAN federation for claude-peers-mcp. Enables Claude Code sessions on different LAN machines to discover each other and exchange messages by manually connecting federation agents via IP address. Includes TLS-encrypted communication (Ed25519), PSK authentication, HMAC message signing, subnet restriction, peer list sync, cross-machine message relay, and CLI commands. Assumes broker auth (prd-broker-auth.md) and structured messages (prd-structured-messages.md) are already implemented. BUG FIXES applied from PAL consensus + codereview: (1) federation endpoints split into LAN-facing (PSK auth) and local-facing (bearer auth), (2) remote send uses broker HTTP endpoint /federation/send-to-remote (server.ts and broker.ts are SEPARATE PROCESSES — cannot share memory or make in-process calls), (3) HMAC canonicalization limitation documented, (4) Ed25519 with RSA fallback, (5) sync error handling, (6) CLI commands route through broker endpoints.",
   "userStories": [
     {
       "id": "US-001",
@@ -26,7 +26,7 @@
       "description": "As a user starting federation for the first time, I want a TLS certificate to be auto-generated so that encrypted communication works without manual PKI setup.",
       "acceptanceCriteria": [
         "New file federation.ts created with cert generation functions",
-        "On first federation startup, if no cert/key files exist at configured paths, generate a self-signed X.509 certificate with Ed25519 key via shelling out to openssl: openssl genpkey -algorithm Ed25519 -out key.pem && openssl req -new -x509 -key key.pem -out cert.pem -days 365 -subj '/CN=$(hostname)'",
+        "On first federation startup, if no cert/key files exist at configured paths, generate a self-signed X.509 certificate. Prefer Ed25519: openssl genpkey -algorithm Ed25519 -out key.pem && openssl req -new -x509 -key key.pem -out cert.pem -days 365 -subj '/CN=$(hostname)'. If Ed25519 fails (e.g. older LibreSSL on macOS), fall back to RSA-2048: openssl req -newkey rsa:2048 -noenc -keyout key.pem -x509 -days 365 -out cert.pem -subj '/CN=$(hostname)'",
         "Default paths: ~/.claude-peers-federation.crt and ~/.claude-peers-federation.key",
         "Configurable via CLAUDE_PEERS_FEDERATION_CERT and CLAUDE_PEERS_FEDERATION_KEY env vars",
         "Certificate Subject CN set to machine hostname (normalized: lowercase, truncated >63 chars, colons rejected at startup), validity 365 days",
@@ -100,18 +100,19 @@
       "title": "Federation broker endpoints",
       "description": "As a developer building the federation layer, I want the local broker to expose federation-specific endpoints so that the federation agent can query local state and deliver remote messages.",
       "acceptanceCriteria": [
-        "New broker endpoint POST /federation/peers returns all local peers (same data as /list-peers scope=machine) for federation sync, requires PSK auth via X-Claude-Peers-PSK header",
-        "New broker endpoint POST /federation/relay accepts { from_id, from_machine, to_id, text, type?, metadata?, reply_to? }, validates to_id exists locally, inserts message into local messages table, requires PSK auth via X-Claude-Peers-PSK header",
-        "Federation endpoints are NOT rate-limited (federation agent is trusted)",
-        "Federation endpoints require PSK auth ONLY (via X-Claude-Peers-PSK header), NOT bearer token auth. Bearer token is for local MCP clients; PSK is for federation (remote machines do not have the bearer token)",
-        "Federation endpoints return 404 if federation is not enabled on this broker (CLAUDE_PEERS_FEDERATION_ENABLED is not true)",
+        "LAN-FACING endpoints (called by remote federation agents over TLS): POST /federation/peers returns all local peers for federation sync, POST /federation/relay accepts { from_id, from_machine, to_id, text, type?, metadata?, reply_to? } and inserts into local messages table. Both require PSK auth via X-Claude-Peers-PSK header ONLY (not bearer token — remote machines don't have it).",
+        "LOCAL-FACING endpoints (called by cli.ts and server.ts over localhost): POST /federation/send-to-remote accepts { to_id, text, type?, metadata?, reply_to? } and routes through the in-process federation agent to the correct remote. POST /federation/connect accepts { host, port } to connect to a remote. POST /federation/disconnect accepts { host, port } to disconnect. GET /federation/status returns federation state. All require bearer token auth (same as other local endpoints).",
+        "The broker's existing POST /list-peers endpoint is extended: when scope='lan' and federation is enabled, it returns BOTH local peers (from SQLite) and remote peers (from the federation agent's in-memory cache, merged by the broker since both run in the same process).",
+        "LAN-facing federation endpoints are NOT rate-limited (federation agent is trusted)",
+        "Local-facing federation endpoints follow existing rate limiting",
+        "All federation endpoints return 404 if federation is not enabled (CLAUDE_PEERS_FEDERATION_ENABLED is not true)",
         "PID liveness check (process.kill(pid, 0)) is bypassed for remote from_ids (those containing colon separator). Remote PIDs are not meaningful locally.",
         "Tests pass",
         "Typecheck passes"
       ],
       "priority": 6,
       "passes": false,
-      "notes": "BUG FIX #1: PAL consensus identified auth confusion. Federation endpoints use PSK only, NOT bearer+PSK. Remote machines don't have the local bearer token. Local broker endpoints continue using bearer only."
+      "notes": "CRITICAL ARCHITECTURE NOTE: broker.ts and server.ts run as SEPARATE PROCESSES (server.ts spawns broker via Bun.spawn). They communicate via HTTP to localhost:7899. The federation agent runs IN-PROCESS with broker.ts (second Bun.serve()), so broker.ts CAN access federation state directly. But server.ts and cli.ts CANNOT — they must use HTTP endpoints. Two endpoint categories: (1) LAN-facing (PSK auth, called by remote federation agents), (2) Local-facing (bearer auth, called by server.ts/cli.ts)."
     },
     {
       "id": "US-007",
@@ -119,7 +120,8 @@
       "description": "As a user, I want to manually connect to a peer machine's federation agent by IP address so that our brokers can share peer lists and route messages.",
       "acceptanceCriteria": [
         "New CLI command: bun cli.ts federation connect <host>:<port>",
-        "Local federation agent initiates a TLS connection to remote host:port with tls: { rejectUnauthorized: false } (self-signed certs expected)",
+        "CLI sends POST /federation/connect { host, port } to the local broker (bearer token auth). The broker's in-process federation agent then initiates the TLS connection to the remote.",
+        "Federation agent connects to remote host:port with tls: { rejectUnauthorized: false } (self-signed certs expected)",
         "On TLS handshake, sends PSK from ~/.claude-peers-token in X-Claude-Peers-PSK header via HTTP POST to remote /federation/handshake",
         "Remote agent validates PSK using crypto.timingSafeEqual(); mismatch returns { error: 'PSK mismatch' } and closes connection",
         "If PSK matches, both sides store each other as a federated peer (in-memory, not persisted to SQLite)",
@@ -138,6 +140,7 @@
       "description": "As a user, I want to disconnect from a specific remote federation agent so that I can control which machines are in my peer network.",
       "acceptanceCriteria": [
         "New CLI command: bun cli.ts federation disconnect <host>:<port>",
+        "CLI sends POST /federation/disconnect { host, port } to the local broker (bearer token auth). The broker's in-process federation agent handles teardown.",
         "Removes the remote from the federated peers list",
         "Closes the TLS connection to that remote",
         "Remote peers from that machine are removed from list_peers(scope='lan') results",
@@ -159,12 +162,13 @@
         "Stale remote peers (from a remote that hasn't synced in 90 seconds) are automatically removed",
         "Local peers remain managed by the local broker (SQLite); remote peers are never written to the local SQLite database",
         "Peer list sync requests are authenticated with PSK (same as handshake)",
+        "Network errors during sync must be caught and logged as warnings; they must NOT crash the broker. Failed syncs count against the 90-second stale timeout.",
         "Tests pass",
         "Typecheck passes"
       ],
       "priority": 9,
       "passes": false,
-      "notes": ""
+      "notes": "GOTCHA: A naive fetch() call will throw unhandled promise rejection if the remote goes offline. Wrap sync loop in try/catch, log warning, continue. Failed syncs still count toward 90s staleness."
     },
     {
       "id": "US-010",
@@ -172,7 +176,7 @@
       "description": "As a Claude Code session, I want to list peers across the LAN so that I can discover sessions on other machines.",
       "acceptanceCriteria": [
         "list_peers MCP tool gains new scope value 'lan'",
-        "When scope='lan', tool returns both local peers (from local broker) and remote peers (from federation agent in-memory cache)",
+        "server.ts passes scope='lan' to the broker's existing POST /list-peers endpoint (the broker handles merging local SQLite peers with federation agent's in-memory remote peers — see US-006)",
         "Remote peers are distinguished with [REMOTE:<hostname>] prefix on first line of each entry",
         "Remote peers include: ID (prefixed with hostname, e.g., rafi-mac:a1b2c3d4), CWD, git_root, session_name, summary, last_seen, machine hostname",
         "Remote peers do NOT include PID or TTY (not meaningful across machines)",
@@ -189,8 +193,8 @@
       "description": "As a Claude Code session, I want to send a message to a peer on another machine so that I can collaborate across machines.",
       "acceptanceCriteria": [
         "send_message in server.ts transparently detects remote peer IDs (those with hostname prefix containing colon, e.g., rafi-mac:b2c3d4e5)",
-        "For remote peers, MCP server calls the federation agent's relay function directly via in-process function call (NOT via a /federation/send-to-remote HTTP endpoint — the federation agent runs in the same process as the broker)",
-        "Federation agent forwards message to correct remote federation agent via POST /federation/relay (TLS, PSK-authenticated, HMAC-signed)",
+        "For remote peers, server.ts sends the message to the broker's local POST /federation/send-to-remote endpoint (bearer token auth, defined in US-006). The broker then routes it through its in-process federation agent.",
+        "The broker's federation agent forwards message to the correct remote federation agent via POST /federation/relay (TLS, PSK-authenticated, HMAC-signed)",
         "Remote federation agent delivers message to its local broker via POST /send-message (localhost, bearer token)",
         "Remote peer receives message via normal polling/channel push mechanism (no changes to recipient-side delivery)",
         "Cross-machine messages include from_machine in the channel notification meta",
@@ -200,7 +204,7 @@
       ],
       "priority": 11,
       "passes": false,
-      "notes": "BUG FIX #2: PAL consensus identified /federation/send-to-remote endpoint was undefined in the PRD. Since the federation agent runs in-process with the broker, use a direct function call instead of an HTTP roundtrip. MCP server detects remote ID (contains colon), imports and calls federation relay function directly."
+      "notes": "ARCHITECTURE: server.ts and broker.ts are SEPARATE PROCESSES. server.ts cannot call federation functions directly. It sends to the broker's /federation/send-to-remote endpoint (bearer auth), and the broker routes through its in-process federation agent."
     },
     {
       "id": "US-012",
@@ -208,6 +212,7 @@
       "description": "As a user, I want to see the current federation status so that I know which machines are connected and how many remote peers are available.",
       "acceptanceCriteria": [
         "New CLI command: bun cli.ts federation status",
+        "CLI sends GET /federation/status to the local broker (bearer token auth). The broker returns federation state from its in-process federation agent.",
         "Displays: federation enabled/disabled, listening port, connected remotes (host, port, hostname, remote peer count, connection uptime), total remote peers",
         "If federation is disabled, prints: 'Federation is disabled. Set CLAUDE_PEERS_FEDERATION_ENABLED=true to enable.'",
         "If federation is enabled but no remotes connected, prints: 'Federation enabled on port <port>. No remote machines connected.'",
@@ -236,9 +241,12 @@
         "Test: stale remote peers are cleaned up after 90 seconds",
         "Test: remote peer IDs are prefixed with machine hostname",
         "Test: remote from_ids bypass PID liveness check",
+        "Test: local /federation/send-to-remote endpoint requires bearer token (not PSK)",
+        "Test: local /federation/connect endpoint requires bearer token (not PSK)",
+        "Test: sync error handling — fetch failure does not crash broker",
         "All tests use temporary TLS certs (Ed25519), temp DB, temp token file (same pattern as broker.test.ts)",
         "Tests spin up two federation agents to test bidirectional communication",
-        "Minimum 14 tests",
+        "Minimum 16 tests",
         "Tests pass",
         "Typecheck passes"
       ],
