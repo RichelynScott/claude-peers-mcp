@@ -350,8 +350,10 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         } catch {
           // Non-critical
         }
+        // Build preview: first line or first 120 chars
+        const preview = message.split("\n")[0].slice(0, 120) + (message.length > 120 ? "..." : "");
         return {
-          content: [{ type: "text" as const, text: `Message sent to peer ${to_id} (msg#${result.message_id})` }],
+          content: [{ type: "text" as const, text: `Message sent to peer ${to_id} (msg#${result.message_id})\n> Preview: ${preview}` }],
         };
       } catch (e) {
         return {
@@ -515,8 +517,12 @@ async function pollAndPushMessages() {
       // Full message log for observability (stderr + file)
       const senderLabel = fromName || msg.from_id;
       const timestamp = new Date().toLocaleTimeString();
-      const logEntry = `[${timestamp}] From ${senderLabel} (${msg.from_id}):\n${msg.text}`;
-      log(`--- MESSAGE RECEIVED ---\n${logEntry}\n--- END MESSAGE ---`);
+      // Build bullet summary: first 3 lines, truncated
+      const lines = msg.text.split("\n").filter((l: string) => l.trim());
+      const bullets = lines.slice(0, 3).map((l: string) => `  • ${l.slice(0, 100)}${l.length > 100 ? "..." : ""}`).join("\n");
+      const summaryLine = lines.length > 3 ? `\n  (${lines.length - 3} more lines)` : "";
+      const logEntry = `[${timestamp}] From ${senderLabel} (${msg.from_id}):\n${bullets}${summaryLine}\n\nFull message:\n${msg.text}`;
+      log(`--- MESSAGE RECEIVED ---\n[${timestamp}] From ${senderLabel} (${msg.from_id}):\n${bullets}${summaryLine}\n--- END MESSAGE ---`);
 
       // Append to persistent message log for tail -f monitoring
       try {

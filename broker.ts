@@ -175,13 +175,17 @@ function handleRegister(body: RegisterRequest): RegisterResponse {
   const id = generateId();
   const now = new Date().toISOString();
 
-  // Remove any existing registration for this PID (re-registration)
-  const existing = db.query("SELECT id FROM peers WHERE pid = ?").get(body.pid) as { id: string } | null;
+  // Preserve session_name and summary from previous registration on re-register
+  let sessionName = body.session_name ?? "";
+  let summary = body.summary ?? "";
+  const existing = db.query("SELECT id, session_name, summary FROM peers WHERE pid = ?").get(body.pid) as { id: string; session_name: string; summary: string } | null;
   if (existing) {
+    if (!sessionName && existing.session_name) sessionName = existing.session_name;
+    if (!summary && existing.summary) summary = existing.summary;
     deletePeer.run(existing.id);
   }
 
-  insertPeer.run(id, body.pid, body.cwd, body.git_root, body.tty, body.session_name ?? "", body.summary, now, now);
+  insertPeer.run(id, body.pid, body.cwd, body.git_root, body.tty, sessionName, summary, now, now);
   return { id };
 }
 
