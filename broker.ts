@@ -301,40 +301,32 @@ Bun.serve({
     const url = new URL(req.url);
     const path = url.pathname;
 
-    // Critical endpoints exempt from rate limiting
+    // /health exempt — always respond
     if (path === "/health") {
       return Response.json({ status: "ok", peers: (selectAllPeers.all() as Peer[]).length });
     }
-    if (path === "/register" || path === "/heartbeat") {
-      // Registration and heartbeat must always work — rate limiting these
-      // causes cascading reconnection failures across all sessions
-      if (req.method === "POST") {
-        try {
-          const body = await req.json();
-          if (path === "/register") return Response.json(handleRegister(body as RegisterRequest));
-          handleHeartbeat(body as HeartbeatRequest);
-          return Response.json({ ok: true });
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          return Response.json({ error: msg }, { status: 500 });
-        }
-      }
-    }
 
-    // Rate limiting: 60 requests per minute per IP
-    const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "127.0.0.1";
-    const now = Date.now();
-    const limit = rateLimits.get(ip);
-    if (limit && now < limit.resetAt) {
-      limit.count++;
-      if (limit.count > 60) {
-        return new Response(JSON.stringify({ error: "Rate limited" }), {
-          status: 429,
-          headers: { "Content-Type": "application/json" },
-        });
+    // Rate limiting: only applies to /send-message (abuse vector).
+    // Internal endpoints (/register, /heartbeat, /poll-messages, /ack-messages,
+    // /set-summary, /set-name, /list-peers, /unregister) are exempt because:
+    // - All traffic is localhost (127.0.0.1) so per-IP = per-machine = one bucket
+    // - Normal polling alone (N peers × 1 req/sec) exceeds any reasonable per-IP limit
+    // - The only abuse vector worth rate-limiting is message spam
+    if (path === "/send-message" && req.method === "POST") {
+      const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "127.0.0.1";
+      const now = Date.now();
+      const limit = rateLimits.get(ip);
+      if (limit && now < limit.resetAt) {
+        limit.count++;
+        if (limit.count > 60) {
+          return new Response(JSON.stringify({ error: "Rate limited" }), {
+            status: 429,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      } else {
+        rateLimits.set(ip, { count: 1, resetAt: now + 60_000 });
       }
-    } else {
-      rateLimits.set(ip, { count: 1, resetAt: now + 60_000 });
     }
 
     if (req.method !== "POST") {

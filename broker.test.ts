@@ -441,13 +441,27 @@ describe("Security & Limits", () => {
     expect(data.error).toContain("too large");
   });
 
-  test("Rate limiting returns 429 after 60 requests", async () => {
-    // /health, /register, /heartbeat are exempt from rate limiting.
-    // Use /set-summary which IS rate-limited.
+  test("Rate limiting on /send-message returns 429 after 60 requests", async () => {
+    // Only /send-message is rate-limited (the only abuse vector on localhost).
+    // All other endpoints are exempt since per-IP on localhost = one shared bucket.
+    const targetRes = await post("/register", {
+      pid: process.pid,
+      cwd: "/tmp/rate-target",
+      git_root: null,
+      tty: null,
+      session_name: "",
+      summary: "",
+    });
+    const target = (await targetRes.json()) as { id: string };
+
     let got429 = false;
     const promises: Promise<Response>[] = [];
     for (let i = 0; i < 120; i++) {
-      promises.push(post("/set-summary", { id: peerId, summary: `test ${i}` }));
+      promises.push(post("/send-message", {
+        from_id: peerId,
+        to_id: target.id,
+        text: `rate limit test ${i}`,
+      }));
     }
 
     const results = await Promise.all(promises);
