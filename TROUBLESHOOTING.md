@@ -10,11 +10,29 @@ bun cli.ts status
 bun cli.ts peers
 
 # Watch message traffic in real time
-tail -f ~/.claude-peers-messages.log
+tail -f app-logs/messages.log
 
-# Check the broker's stderr (if launched manually)
-bun broker.ts
+# Watch broker events (startup, cleanup, errors)
+tail -f app-logs/broker.log
+
+# Watch MCP server events (registration, polling, errors)
+tail -f app-logs/server.log
+
+# Watch everything at once
+tail -f app-logs/*.log
 ```
+
+## Log Files
+
+All application logs are in `app-logs/` (gitignored, local only):
+
+| File | Contents |
+|------|----------|
+| `app-logs/messages.log` | All sent and received messages with timestamps and sender names |
+| `app-logs/broker.log` | Broker lifecycle: startup, peer cleanup, message cleanup, errors |
+| `app-logs/server.log` | MCP server: registration, polling, connection events, errors |
+
+Note: Claude Code hook logs (chat.json, pre_tool_use.json, etc.) are in `logs/` — these are unrelated to our application.
 
 ---
 

@@ -36,5 +36,8 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # Claude Code project data
 .claude/
 
+# Application logs (broker, server, messages)
+app-logs/*.log
+
 # Archive
 archive/

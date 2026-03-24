@@ -36,9 +36,14 @@ bun cli.ts kill-broker     # stop broker daemon
 
 ## Observability
 
-- **stderr**: Full messages logged to MCP server stderr (visible in Claude Code MCP logs)
-- **Log file**: `~/.claude-peers-messages.log` — both sent and received. Monitor with `tail -f`
+All application logs are in `app-logs/` (gitignored):
+
+- **`app-logs/messages.log`**: All sent and received messages with timestamps, sender names, message IDs
+- **`app-logs/broker.log`**: Broker lifecycle — startup, peer cleanup, message cleanup, rate limiting
+- **`app-logs/server.log`**: MCP server — registration, polling, connection events, errors
+- **stderr**: Also echoed to stderr (visible in Claude Code MCP logs)
 - **CLI**: `bun cli.ts status` shows registered peers with [SESSION_NAME] tags
+- **Monitor all**: `tail -f app-logs/*.log`
 
 ## Bun
 

@@ -93,9 +93,18 @@ async function ensureBroker(): Promise<void> {
 
 // --- Utility ---
 
+const APP_LOG_DIR = new URL("./app-logs", import.meta.url).pathname;
+const MSG_LOG_PATH = `${APP_LOG_DIR}/messages.log`;
+const SERVER_LOG_PATH = `${APP_LOG_DIR}/server.log`;
+
+// Ensure log directory exists
+try { require("fs").mkdirSync(APP_LOG_DIR, { recursive: true }); } catch {}
+
 function log(msg: string) {
   // MCP stdio servers must only use stderr for logging (stdout is the MCP protocol)
+  const line = `[${new Date().toISOString()}] ${msg}`;
   console.error(`[claude-peers] ${msg}`);
+  try { Bun.write(Bun.file(SERVER_LOG_PATH), line + "\n", { append: true }); } catch {}
 }
 
 async function getGitRoot(cwd: string): Promise<string | null> {
@@ -335,7 +344,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         const timestamp = new Date().toLocaleTimeString();
         log(`--- MESSAGE SENT ---\n[${timestamp}] To ${to_id} (msg#${result.message_id}):\n${message}\n--- END MESSAGE ---`);
         try {
-          const logPath = `${process.env.HOME}/.claude-peers-messages.log`;
+          const logPath = MSG_LOG_PATH;
           const entry = `\n${"=".repeat(60)}\n[${timestamp}] SENT to ${to_id} (msg#${result.message_id}):\n${message}\n`;
           await Bun.write(Bun.file(logPath), entry, { append: true });
         } catch {
