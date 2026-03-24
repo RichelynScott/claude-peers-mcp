@@ -54,6 +54,8 @@ const TOKEN_PATH = process.env.CLAUDE_PEERS_TOKEN ?? `${process.env.HOME}/.claud
 // --- Federation configuration (US-003) ---
 const FEDERATION_ENABLED = process.env.CLAUDE_PEERS_FEDERATION_ENABLED === "true" || process.env.CLAUDE_PEERS_FEDERATION_ENABLED === "1";
 const FEDERATION_PORT = parseInt(process.env.CLAUDE_PEERS_FEDERATION_PORT ?? "7900", 10);
+const FEDERATION_SYNC_INTERVAL_MS = 30_000;
+const FEDERATION_STALE_TIMEOUT_MS = 90_000;
 
 // Ensure log directory exists
 try { require("fs").mkdirSync(LOG_DIR, { recursive: true }); } catch {}
@@ -828,6 +830,57 @@ async function handleFederationSendToRemote(body: {
   }
 }
 
+// --- Federation periodic peer sync (US-009) ---
+
+async function syncRemotePeers(): Promise<void> {
+  if (!FEDERATION_ENABLED || remoteMachines.size === 0) return;
+
+  const now = Date.now();
+
+  for (const [key, remote] of remoteMachines) {
+    try {
+      const resp = await fetch(`https://${remote.host}:${remote.port}/federation/peers`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Claude-Peers-PSK": currentToken,
+        },
+        body: JSON.stringify({}),
+        tls: { rejectUnauthorized: false },
+      });
+
+      if (!resp.ok) {
+        federationLog(`Sync warning: ${remote.hostname} (${key}) returned ${resp.status}`);
+        continue;
+      }
+
+      const data = await resp.json() as FederationPeersResponse;
+      remote.peers = data.peers.map((p: Peer) => ({
+        id: `${remote.hostname}:${p.id}`,
+        machine: remote.hostname,
+        cwd: p.cwd,
+        git_root: p.git_root,
+        session_name: p.session_name,
+        summary: p.summary,
+        last_seen: p.last_seen,
+      }));
+      remote.last_sync = new Date().toISOString();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      federationLog(`Sync warning: failed to reach ${remote.hostname} (${key}): ${msg}`);
+    }
+  }
+
+  // Evict stale remotes whose last_sync exceeds the stale timeout
+  for (const [key, remote] of remoteMachines) {
+    const lastSyncAge = now - new Date(remote.last_sync).getTime();
+    if (lastSyncAge > FEDERATION_STALE_TIMEOUT_MS) {
+      federationLog(`Evicting stale remote ${remote.hostname} (${key}) — last sync ${Math.round(lastSyncAge / 1000)}s ago`);
+      remoteMachines.delete(key);
+    }
+  }
+}
+
 // --- Federation TLS server (US-003, US-004, US-006) ---
 
 async function handleFederationRequest(req: Request): Promise<Response> {
@@ -974,6 +1027,18 @@ if (FEDERATION_ENABLED) {
       });
 
       federationLog(`Listening on 0.0.0.0:${FEDERATION_PORT} (TLS) — hostname: ${federationHostname}`);
+
+      // US-009: Start periodic peer sync with connected remotes
+      const federationSyncTimer = setInterval(async () => {
+        try {
+          await syncRemotePeers();
+        } catch (err) {
+          federationLog(`Sync error (non-fatal): ${err}`);
+        }
+      }, FEDERATION_SYNC_INTERVAL_MS);
+
+      // Prevent the timer from keeping the process alive if broker is shutting down
+      if (federationSyncTimer.unref) federationSyncTimer.unref();
     } catch (err) {
       // CRITICAL: Federation failure must not crash the broker
       const msg = err instanceof Error ? err.message : String(err);
