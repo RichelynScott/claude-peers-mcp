@@ -104,7 +104,10 @@ Use `bun test` to run tests. Test files: `*.test.ts`.
 | `FYI.md` | Decision journal and backlog |
 | `CLAUDE.md` | This file — project instructions |
 | `broker.test.ts` | Broker test suite (40 tests) |
+| `cli.test.ts` | CLI + auto-summary test suite (17 tests) |
+| `server.test.ts` | MCP server integration tests (18 tests) |
 | `shared/types.ts` | All TypeScript interfaces |
-| `broker.ts` | HTTP server + SQLite |
+| `shared/token.ts` | Shared token file reader for auth |
+| `broker.ts` | HTTP server + SQLite + auth middleware |
 | `server.ts` | MCP server + channel push |
-| `cli.ts` | CLI utility |
+| `cli.ts` | CLI utility + auto-summary command |

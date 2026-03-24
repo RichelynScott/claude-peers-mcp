@@ -75,19 +75,19 @@
 ### HIGH Priority
 | Item | Details | Status |
 |------|---------|--------|
-| Auto-summary SessionStart hook | Deterministic hook: reads cwd + git branch + TaskMaster state, calls cli.ts set-summary. | OPEN — lives in ~/.claude/hooks, separate task |
+| ~~Auto-summary SessionStart hook~~ | ~~Deterministic hook: reads cwd + git branch + TaskMaster state, calls cli.ts set-summary.~~ | DONE `57ee55a` (CLI) + `b4e388c` (hook in ~/.claude/) |
 | ~~Message table cleanup~~ | ~~Delivered messages never deleted~~ | DONE `c54dd1a` — 7-day cleanup on 60s interval |
 
 ### MEDIUM Priority
 | Item | Details | Status |
 |------|---------|--------|
 | ~~CLI set-name command~~ | ~~cli.ts has no set-name subcommand~~ | DONE `c54dd1a` |
-| Broker auth | Auto-generated token at ~/.claude-peers-token, Authorization header. | OPEN — needs design for token lifecycle |
+| ~~Broker auth~~ | ~~Auto-generated token at ~/.claude-peers-token, Authorization header.~~ | DONE `8d52439` — token gen, auth middleware, rotation, SIGHUP re-read |
 | ~~Test suite~~ | ~~Zero tests~~ | DONE `cca5691` — 19 tests in broker.test.ts |
 | ~~README.md update~~ | ~~Still upstream's version~~ | DONE `cca5691` — full rewrite, 13 sections |
 | ~~Message size limits~~ | ~~No limit on /send-message payload~~ | DONE `c54dd1a` — 10KB max |
 | ~~Rate limiting~~ | ~~No rate limiting on any broker endpoint~~ | DONE `c54dd1a` — 60 req/min per IP |
-| server.test.ts | MCP server tool handler tests (needs SDK mocking) | OPEN — deferred until broker tests establish patterns |
+| ~~server.test.ts~~ | ~~MCP server tool handler tests (needs SDK mocking)~~ | DONE `67baf9f` — 18 tests via MCP Client over stdio |
 
 ### LOW Priority
 | Item | Details | Source |
