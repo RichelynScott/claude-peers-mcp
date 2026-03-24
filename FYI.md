@@ -1,5 +1,12 @@
 # FYI - claude-peers-mcp Decision Journal
 
+## 2026-03-24 - Backlog-to-Ralph Pipeline: 6 PRDs + 5 prd.json created
+### What: Converted entire project backlog into Ralph-compatible PRDs using the Backlog-to-Ralph Pipeline workflow
+### Why: User wanted all backlog items addressed systematically with autonomous execution capability via Ralph
+### How: PAL Planner (Grok 4.20 + Gemini 3.1 Pro) analyzed backlog → tiered items (Ralph vs direct subagent) → mapped dependency graph → phased PRD creation via parallel subagents → Ralph prd.json conversion. Key decisions: (1) bundled structured messages + broadcast into one PRD (broadcast IS a message type), (2) deferred server.test.ts until after auth + structured messages to avoid testing moving API, (3) split auto-summary into CLI (this repo) + hook (~/.claude/) due to cross-directory concern, (4) LAN discovery converted Phase A only (manual federation), (5) hcom bridge + clink dual-bus too small for Ralph → direct subagent tasks.
+### Impact: 6 PRDs (2170+ lines total), 5 Ralph prd.json files (45 stories total), ready for phased autonomous execution. Workflow pattern documented and integrated into research-methodologies skill by ADD_MORE_2_CC session.
+### Related: `8f344b9` through `4b885be` (11 commits). PAL continuation_id: `0c4aa37b-6f43-4e16-bb9a-88265ae318a5`
+
 ## 2026-03-24 - Future: LAN cross-machine peer discovery
 ### What: Investigate enabling Claude Code sessions on different machines to communicate over the same local network
 ### Why: User and coworker (Rafi) are on the same LAN. Currently CPM only works on localhost (127.0.0.1). Cross-machine communication would enable real-time collaboration between their Claude Code sessions.
