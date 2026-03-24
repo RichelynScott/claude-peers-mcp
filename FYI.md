@@ -1,5 +1,12 @@
 # FYI - claude-peers-mcp Decision Journal
 
+## 2026-03-24 - Two-phase message delivery + liveness check
+### What: Replaced at-most-once delivery with at-least-once via two-phase poll+ack. Added PID liveness check on send.
+### Why: Messages were silently lost if channel notification failed after broker marked them delivered. User experienced "sent but never received" limbo. Grok 4.20 Reasoning (via PAL thinkdeep) recommended this over a 2s blocking wait approach.
+### How: /poll-messages no longer marks delivered. New /ack-messages endpoint called by MCP server AFTER successful notification push. If ack fails, messages stay undelivered and retry next poll. handleSendMessage now checks target PID liveness with process.kill(pid, 0) before inserting — dead peers get immediate error instead of silent queueing. Returns message_id for tracking.
+### Impact: At-least-once delivery guarantee. No more silent message loss. Dead peer detection on send. No added latency on happy path. 20 tests pass (52 assertions).
+### Related: `de82a12`
+
 ## 2026-03-24 - PAL code review fixes
 ### What: Fixed 2 medium issues identified by PAL codereview (GPT-5.4 Pro)
 ### Why: Rate limit map grew unbounded (memory leak on long-running broker), log file append was O(n) per write (read entire file, concatenate, rewrite)

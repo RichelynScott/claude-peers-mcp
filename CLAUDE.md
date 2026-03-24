@@ -75,8 +75,13 @@ Use `bun test` to run tests. Test files: `*.test.ts`.
 | Message size limit (10KB max) | Done | `c54dd1a` |
 | Rate limiting (60 req/min per IP) | Done | `c54dd1a` |
 | CLI set-name command | Done | `c54dd1a` |
-| Broker test suite (19 tests) | Done | `cca5691` |
+| Broker test suite (20 tests) | Done | `cca5691`, `de82a12` |
 | README rewrite for fork | Done | `cca5691` |
+| Rate limit map cleanup (60s interval) | Done | `e7515e0` |
+| O(1) log file append | Done | `e7515e0` |
+| Two-phase delivery (poll + ack) | Done | `de82a12` |
+| PID liveness check on send | Done | `de82a12` |
+| Message ID returned on send | Done | `de82a12` |
 | ZSH wrapper for auto-channel-push | Done (in ~/.zshrc) | N/A |
 
 **Sync policy**: Monthly `git fetch upstream`, cherry-pick selectively. Upstream has 8 open PRs to watch.
