@@ -1,5 +1,12 @@
 # FYI - claude-peers-mcp Decision Journal
 
+## 2026-03-24 - Full backlog implementation (Phases 1-3)
+### What: Implemented 4 major features from backlog PRDs + MCP server test suite, coordinated hook implementation via CPM
+### Why: User requested full backlog execution using the Backlog-to-Ralph Pipeline pattern
+### How: Parallel worktree subagents for Phase 1 (auto-summary CLI + broker auth), sequential for Phase 2 (structured messages), Phase 3 (server tests). Hook routed to CLAUDE_GLOBAL_SESH via CPM for ~/.claude/ implementation. Key decisions: (1) auto-summary hook uses cwd-based peer matching, not PID (PRD open question resolved by CLAUDE_GLOBAL_SESH), (2) server tests use MCP Client over stdio for full-stack testing, (3) LAN discovery deferred — needs deep research on Bun TLS + WSL2 mDNS.
+### Impact: 75 tests (40 broker + 17 CLI + 18 server), 205 assertions, all passing. 6 new files, 5 major features shipped. Only LAN discovery (Phase 4) remains — requires deep research before implementation.
+### Related: `8d52439`, `57ee55a`, `133d09e`, `67baf9f`
+
 ## 2026-03-24 - Structured Message Protocol + Broadcast
 ### What: Added typed messages (text/query/response/handoff/broadcast), JSON metadata, reply_to threading, and /broadcast endpoint
 ### Why: Messages were untyped plain text, 1:1 only. Peers need semantic routing (query vs handoff vs broadcast) and group communication.
