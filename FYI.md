@@ -1,5 +1,12 @@
 # FYI - claude-peers-mcp Decision Journal
 
+## 2026-03-24 - PAL code review fixes
+### What: Fixed 2 medium issues identified by PAL codereview (GPT-5.4 Pro)
+### Why: Rate limit map grew unbounded (memory leak on long-running broker), log file append was O(n) per write (read entire file, concatenate, rewrite)
+### How: Added 60s interval to clean expired rate limit entries. Replaced read-then-write log append with Bun.write append mode. Also fixed /health POST passthrough — now returns health for any HTTP method.
+### Impact: Broker can run indefinitely without memory growth. Log file writes are O(1) regardless of file size.
+### Related: `e7515e0`
+
 ## 2026-03-24 - Broker hardening sprint (cleanup, limits, rate limiting, tests)
 ### What: Comprehensive broker hardening + test suite + README rewrite
 ### Why: Backlog from ADD_MORE_2_CC knowledge transfer identified critical gaps: delivered messages never cleaned, no size limits, no rate limiting, zero tests, outdated README.
