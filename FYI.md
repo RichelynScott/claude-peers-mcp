@@ -1,5 +1,12 @@
 # FYI - claude-peers-mcp Decision Journal
 
+## 2026-03-24 - Broker hardening sprint (cleanup, limits, rate limiting, tests)
+### What: Comprehensive broker hardening + test suite + README rewrite
+### Why: Backlog from ADD_MORE_2_CC knowledge transfer identified critical gaps: delivered messages never cleaned, no size limits, no rate limiting, zero tests, outdated README.
+### How: PAL planner (Gemini 3.1 Pro) designed 2-wave parallel execution plan. Wave 1: broker hardening (message cleanup, 10KB size limit, 60req/min rate limiting) + CLI set-name command. Wave 2: 19-test broker test suite + full README rewrite. TDZ bug discovered and fixed during testing (cleanDeliveredMessages called before prepared statement declared).
+### Impact: Broker is now production-hardened. 19 tests pass. README documents all fork features. Backlog HIGH items resolved, most MEDIUM items complete.
+### Related: `c54dd1a`, `cca5691`
+
 ## 2026-03-24 - session_name feature implemented
 ### What: Added session_name as first-class field to peer registry
 ### Why: Claude Code sessions use /rename for human-friendly names, but list_peers only showed opaque 8-char IDs. Peers need to identify each other by name.
@@ -24,20 +31,21 @@
 ## Backlog (from ADD_MORE_2_CC knowledge transfer)
 
 ### HIGH Priority
-| Item | Details | Source |
+| Item | Details | Status |
 |------|---------|--------|
-| Auto-summary SessionStart hook | Deterministic hook: reads cwd + git branch + TaskMaster state, calls cli.ts set-summary. PAL 5-model consensus: manual set_summary will fail due to forgetfulness. | PAL consensus (5 models) |
-| Message table cleanup | Delivered messages never deleted. Need: DELETE WHERE delivered=1 AND sent_at < datetime('now', '-7 days') | Known bug |
+| Auto-summary SessionStart hook | Deterministic hook: reads cwd + git branch + TaskMaster state, calls cli.ts set-summary. | OPEN — lives in ~/.claude/hooks, separate task |
+| ~~Message table cleanup~~ | ~~Delivered messages never deleted~~ | DONE `c54dd1a` — 7-day cleanup on 60s interval |
 
 ### MEDIUM Priority
-| Item | Details | Source |
+| Item | Details | Status |
 |------|---------|--------|
-| CLI set-name command | cli.ts has no `set-name` subcommand (only MCP tool). Parity gap. | ADD_MORE_2_CC |
-| Broker auth | Auto-generated token at ~/.claude-peers-token, passed as Authorization header. Prevents rogue processes from injecting messages. | Gemini 3.1 Pro |
-| Test suite | Zero tests. Need broker.test.ts, server.test.ts. Bun has built-in test runner. | ADD_MORE_2_CC |
-| README.md update | Still upstream's version. Needs session_name, ZSH wrapper, set_name docs. | ADD_MORE_2_CC |
-| Message size limits | No limit on /send-message payload. | Known gap |
-| Rate limiting | No rate limiting on any broker endpoint. | Known gap |
+| ~~CLI set-name command~~ | ~~cli.ts has no set-name subcommand~~ | DONE `c54dd1a` |
+| Broker auth | Auto-generated token at ~/.claude-peers-token, Authorization header. | OPEN — needs design for token lifecycle |
+| ~~Test suite~~ | ~~Zero tests~~ | DONE `cca5691` — 19 tests in broker.test.ts |
+| ~~README.md update~~ | ~~Still upstream's version~~ | DONE `cca5691` — full rewrite, 13 sections |
+| ~~Message size limits~~ | ~~No limit on /send-message payload~~ | DONE `c54dd1a` — 10KB max |
+| ~~Rate limiting~~ | ~~No rate limiting on any broker endpoint~~ | DONE `c54dd1a` — 60 req/min per IP |
+| server.test.ts | MCP server tool handler tests (needs SDK mocking) | OPEN — deferred until broker tests establish patterns |
 
 ### LOW Priority
 | Item | Details | Source |

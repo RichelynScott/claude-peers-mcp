@@ -70,7 +70,13 @@ Use `bun test` to run tests. Test files: `*.test.ts`.
 | Schema migration (ALTER TABLE) for existing DBs | Done | `6b8ec50` |
 | from_name in channel push meta | Done | `6b8ec50` |
 | [SESSION_NAME] tag in CLI output | Done | `6b8ec50` |
-| Full message logging (stderr + file) | Done | pending |
+| Full message logging (stderr + file) | Done | `c995316` |
+| Message cleanup (delivered + 7 days) | Done | `c54dd1a` |
+| Message size limit (10KB max) | Done | `c54dd1a` |
+| Rate limiting (60 req/min per IP) | Done | `c54dd1a` |
+| CLI set-name command | Done | `c54dd1a` |
+| Broker test suite (19 tests) | Done | `cca5691` |
+| README rewrite for fork | Done | `cca5691` |
 | ZSH wrapper for auto-channel-push | Done (in ~/.zshrc) | N/A |
 
 **Sync policy**: Monthly `git fetch upstream`, cherry-pick selectively. Upstream has 8 open PRs to watch.
@@ -81,6 +87,7 @@ Use `bun test` to run tests. Test files: `*.test.ts`.
 |------|---------|
 | `FYI.md` | Decision journal and backlog |
 | `CLAUDE.md` | This file — project instructions |
+| `broker.test.ts` | Broker test suite (19 tests) |
 | `shared/types.ts` | All TypeScript interfaces |
 | `broker.ts` | HTTP server + SQLite |
 | `server.ts` | MCP server + channel push |
