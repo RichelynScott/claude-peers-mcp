@@ -23,8 +23,11 @@ import type {
   PollMessagesRequest,
   PollMessagesResponse,
   AckMessagesRequest,
+  BroadcastRequest,
+  BroadcastResponse,
   Peer,
   Message,
+  MessageType,
 } from "./shared/types.ts";
 
 const PORT = parseInt(process.env.CLAUDE_PEERS_PORT ?? "7899", 10);
@@ -124,12 +127,20 @@ db.run(`
     from_id TEXT NOT NULL,
     to_id TEXT NOT NULL,
     text TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'text',
+    metadata TEXT DEFAULT NULL,
+    reply_to INTEGER DEFAULT NULL,
     sent_at TEXT NOT NULL,
     delivered INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (from_id) REFERENCES peers(id),
     FOREIGN KEY (to_id) REFERENCES peers(id)
   )
 `);
+
+// Schema migration: add structured message columns for existing databases
+try { db.run("ALTER TABLE messages ADD COLUMN type TEXT NOT NULL DEFAULT 'text'"); } catch { /* column already exists */ }
+try { db.run("ALTER TABLE messages ADD COLUMN metadata TEXT DEFAULT NULL"); } catch { /* column already exists */ }
+try { db.run("ALTER TABLE messages ADD COLUMN reply_to INTEGER DEFAULT NULL"); } catch { /* column already exists */ }
 
 // Clean up stale peers (PIDs that no longer exist) on startup
 function cleanStalePeers() {
@@ -187,12 +198,16 @@ const selectPeersByGitRoot = db.prepare(`
 `);
 
 const insertMessage = db.prepare(`
-  INSERT INTO messages (from_id, to_id, text, sent_at, delivered)
-  VALUES (?, ?, ?, ?, 0)
+  INSERT INTO messages (from_id, to_id, text, type, metadata, reply_to, sent_at, delivered)
+  VALUES (?, ?, ?, ?, ?, ?, ?, 0)
 `);
 
 const selectUndelivered = db.prepare(`
   SELECT * FROM messages WHERE to_id = ? AND delivered = 0 ORDER BY sent_at ASC
+`);
+
+const selectMessageExists = db.prepare(`
+  SELECT id FROM messages WHERE id = ?
 `);
 
 const markDelivered = db.prepare(`
@@ -299,10 +314,36 @@ function handleListPeers(body: ListPeersRequest): Peer[] {
   });
 }
 
+const VALID_MESSAGE_TYPES = new Set<string>(["text", "query", "response", "handoff", "broadcast"]);
+
 function handleSendMessage(body: SendMessageRequest): { ok: boolean; error?: string; message_id?: number } {
-  // Enforce message size limit (10KB)
-  if (body.text.length > 10240) {
-    return { ok: false, error: "Message too large (max 10KB)" };
+  // Validate type if provided
+  const type: MessageType = (body.type ?? "text") as MessageType;
+  if (!VALID_MESSAGE_TYPES.has(type)) {
+    return { ok: false, error: `Invalid message type: ${body.type}` };
+  }
+
+  // Validate metadata if provided — must be a plain object (not array, string, number, etc.)
+  let metadataStr: string | null = null;
+  if (body.metadata !== undefined && body.metadata !== null) {
+    if (typeof body.metadata !== "object" || Array.isArray(body.metadata)) {
+      return { ok: false, error: "metadata must be a JSON object" };
+    }
+    metadataStr = JSON.stringify(body.metadata);
+  }
+
+  // Enforce message size limit (10KB) — text + metadata combined
+  const totalSize = body.text.length + (metadataStr?.length ?? 0);
+  if (totalSize > 10240) {
+    return { ok: false, error: "Message too large (text + metadata max 10KB)" };
+  }
+
+  // Validate reply_to if provided
+  if (body.reply_to !== undefined && body.reply_to !== null) {
+    const referenced = selectMessageExists.get(body.reply_to) as { id: number } | null;
+    if (!referenced) {
+      return { ok: false, error: `Referenced message ${body.reply_to} not found` };
+    }
   }
 
   // Verify target exists and is alive
@@ -320,14 +361,77 @@ function handleSendMessage(body: SendMessageRequest): { ok: boolean; error?: str
     return { ok: false, error: `Peer ${body.to_id} is not running (PID ${target.pid} dead)` };
   }
 
-  const result = insertMessage.run(body.from_id, body.to_id, body.text, new Date().toISOString());
+  const result = insertMessage.run(
+    body.from_id, body.to_id, body.text, type,
+    metadataStr, body.reply_to ?? null, new Date().toISOString()
+  );
   return { ok: true, message_id: Number(result.lastInsertRowid) };
+}
+
+function handleBroadcast(body: BroadcastRequest): BroadcastResponse {
+  // Validate type if provided
+  const type: MessageType = (body.type ?? "broadcast") as MessageType;
+  if (!VALID_MESSAGE_TYPES.has(type)) {
+    return { ok: false, recipients: 0, message_ids: [], error: `Invalid message type: ${body.type}` };
+  }
+
+  // Validate metadata if provided
+  let metadataStr: string | null = null;
+  if (body.metadata !== undefined && body.metadata !== null) {
+    if (typeof body.metadata !== "object" || Array.isArray(body.metadata)) {
+      return { ok: false, recipients: 0, message_ids: [], error: "metadata must be a JSON object" };
+    }
+    metadataStr = JSON.stringify(body.metadata);
+  }
+
+  // Enforce message size limit (10KB) — text + metadata combined
+  const totalSize = body.text.length + (metadataStr?.length ?? 0);
+  if (totalSize > 10240) {
+    return { ok: false, recipients: 0, message_ids: [], error: "Message too large (text + metadata max 10KB)" };
+  }
+
+  // Resolve recipients using existing list-peers logic, excluding sender
+  const peers = handleListPeers({
+    scope: body.scope,
+    cwd: body.cwd,
+    git_root: body.git_root,
+    exclude_id: body.from_id,
+  });
+
+  if (peers.length === 0) {
+    return { ok: true, recipients: 0, message_ids: [] };
+  }
+
+  const now = new Date().toISOString();
+  const messageIds: number[] = [];
+
+  // Atomic: all messages inserted in one transaction
+  const insertAll = db.transaction(() => {
+    for (const peer of peers) {
+      const result = insertMessage.run(
+        body.from_id, peer.id, body.text, type,
+        metadataStr, null, now
+      );
+      messageIds.push(Number(result.lastInsertRowid));
+    }
+  });
+  insertAll();
+
+  brokerLog(`broadcast from ${body.from_id} to ${peers.length} peer(s) in scope ${body.scope}`);
+  return { ok: true, recipients: peers.length, message_ids: messageIds };
 }
 
 function handlePollMessages(body: PollMessagesRequest): PollMessagesResponse {
   // Two-phase delivery: return messages but do NOT mark delivered.
   // Recipient must call /ack-messages after successful channel notification push.
-  const messages = selectUndelivered.all(body.id) as Message[];
+  const rows = selectUndelivered.all(body.id) as Array<Record<string, unknown>>;
+  // Parse metadata from JSON string back to object
+  const messages: Message[] = rows.map((row) => ({
+    ...row,
+    metadata: row.metadata ? JSON.parse(row.metadata as string) : null,
+    reply_to: row.reply_to as number | null,
+    type: (row.type as MessageType) ?? "text",
+  })) as Message[];
   return { messages };
 }
 
@@ -386,7 +490,7 @@ Bun.serve({
     // - All traffic is localhost (127.0.0.1) so per-IP = per-machine = one bucket
     // - Normal polling alone (N peers × 1 req/sec) exceeds any reasonable per-IP limit
     // - The only abuse vector worth rate-limiting is message spam
-    if (path === "/send-message" && req.method === "POST") {
+    if ((path === "/send-message" || path === "/broadcast") && req.method === "POST") {
       const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "127.0.0.1";
       const now = Date.now();
       const limit = rateLimits.get(ip);
@@ -426,6 +530,8 @@ Bun.serve({
           return Response.json(handleListPeers(body as ListPeersRequest));
         case "/send-message":
           return Response.json(handleSendMessage(body as SendMessageRequest));
+        case "/broadcast":
+          return Response.json(handleBroadcast(body as BroadcastRequest));
         case "/poll-messages":
           return Response.json(handlePollMessages(body as PollMessagesRequest));
         case "/ack-messages":

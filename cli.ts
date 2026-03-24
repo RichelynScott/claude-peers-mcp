@@ -8,6 +8,7 @@
  *   bun cli.ts status                    — Show broker status and all peers
  *   bun cli.ts peers                     — List all peers
  *   bun cli.ts send <id> <msg>           — Send a message to a peer
+ *   bun cli.ts broadcast <scope> <msg>   — Broadcast to all peers in scope
  *   bun cli.ts set-name <id> <name>      — Set a peer's session name
  *   bun cli.ts auto-summary <id>         — Generate and set a deterministic summary
  *   bun cli.ts rotate-token               — Rotate the auth token
@@ -17,6 +18,7 @@
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { TOKEN_PATH, readTokenSync } from "./shared/token.ts";
+import type { BroadcastResponse } from "./shared/types.ts";
 
 const BROKER_PORT = parseInt(process.env.CLAUDE_PEERS_PORT ?? "7899", 10);
 const BROKER_URL = `http://127.0.0.1:${BROKER_PORT}`;
@@ -286,15 +288,56 @@ if (Bun.main === import.meta.path) {
         process.exit(1);
       }
       try {
-        const result = await brokerFetch<{ ok: boolean; error?: string }>("/send-message", {
+        const result = await brokerFetch<{ ok: boolean; error?: string; message_id?: number }>("/send-message", {
           from_id: "cli",
           to_id: toId,
           text: msg,
         });
         if (result.ok) {
-          console.log(`Message sent to ${toId}`);
+          console.log(`Message sent to ${toId} (msg#${result.message_id}, type: text)`);
         } else {
           console.error(`Failed: ${result.error}`);
+        }
+      } catch (e) {
+        console.error(`Error: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      break;
+    }
+
+    case "broadcast": {
+      const scope = process.argv[3] as "machine" | "directory" | "repo";
+      const msg = process.argv.slice(4).join(" ");
+      if (!scope || !msg || !["machine", "directory", "repo"].includes(scope)) {
+        console.error("Usage: bun cli.ts broadcast <machine|directory|repo> <message>");
+        process.exit(1);
+      }
+      const cwd = process.cwd();
+      let gitRoot: string | null = null;
+      try {
+        const proc = Bun.spawnSync(["git", "rev-parse", "--show-toplevel"], {
+          cwd,
+          stdout: "pipe",
+          stderr: "ignore",
+        });
+        if (proc.exitCode === 0) {
+          gitRoot = new TextDecoder().decode(proc.stdout).trim() || null;
+        }
+      } catch {}
+      try {
+        const result = await brokerFetch<BroadcastResponse>("/broadcast", {
+          from_id: "cli",
+          text: msg,
+          type: "broadcast",
+          scope,
+          cwd,
+          git_root: gitRoot,
+        });
+        if (!result.ok) {
+          console.error(`Failed: ${result.error}`);
+        } else if (result.recipients === 0) {
+          console.log(`No peers in scope '${scope}'`);
+        } else {
+          console.log(`Broadcast sent to ${result.recipients} peer(s)`);
         }
       } catch (e) {
         console.error(`Error: ${e instanceof Error ? e.message : String(e)}`);
@@ -397,12 +440,13 @@ if (Bun.main === import.meta.path) {
       console.log(`claude-peers CLI
 
 Usage:
-  bun cli.ts status                    Show broker status and all peers
-  bun cli.ts peers                     List all peers
-  bun cli.ts send <id> <msg>           Send a message to a peer
-  bun cli.ts set-name <id> <name>      Set a peer's session name
-  bun cli.ts auto-summary <id>         Generate and set a deterministic summary
-  bun cli.ts rotate-token              Rotate the auth token
-  bun cli.ts kill-broker               Stop the broker daemon`);
+  bun cli.ts status                          Show broker status and all peers
+  bun cli.ts peers                           List all peers
+  bun cli.ts send <id> <msg>                 Send a message to a peer
+  bun cli.ts broadcast <scope> <msg>         Broadcast to all peers in scope (machine/directory/repo)
+  bun cli.ts set-name <id> <name>            Set a peer's session name
+  bun cli.ts auto-summary <id>               Generate and set a deterministic summary
+  bun cli.ts rotate-token                    Rotate the auth token
+  bun cli.ts kill-broker                     Stop the broker daemon`);
   }
 }

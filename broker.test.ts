@@ -491,6 +491,441 @@ describe("Messaging", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Structured Messages
+// ---------------------------------------------------------------------------
+
+describe("Structured Messages", () => {
+  let senderId: string;
+  let receiverId: string;
+
+  beforeAll(async () => {
+    senderId = await registerPeer({ cwd: "/tmp/struct-sender" });
+    const res = await post("/register", {
+      pid: process.pid,
+      cwd: "/tmp/struct-receiver",
+      git_root: null,
+      tty: null,
+      session_name: "struct-receiver",
+      summary: "",
+    });
+    const data = (await res.json()) as { id: string };
+    receiverId = data.id;
+  });
+
+  test("Send message with type 'query' stores and returns type correctly", async () => {
+    const sendRes = await post("/send-message", {
+      from_id: senderId,
+      to_id: receiverId,
+      text: "What are you working on?",
+      type: "query",
+    });
+    const sendData = (await sendRes.json()) as { ok: boolean; message_id: number };
+    expect(sendData.ok).toBe(true);
+
+    const pollRes = await post("/poll-messages", { id: receiverId });
+    const pollData = (await pollRes.json()) as { messages: Array<{ id: number; type: string; text: string }> };
+    const msg = pollData.messages.find((m) => m.id === sendData.message_id);
+    expect(msg).toBeDefined();
+    expect(msg!.type).toBe("query");
+
+    // Clean up
+    await post("/ack-messages", { id: receiverId, message_ids: pollData.messages.map((m) => m.id) });
+  });
+
+  test("Send message with type 'handoff' and metadata round-trips correctly", async () => {
+    const metadata = { task: "review PR", files: ["server.ts"], context: "urgent" };
+    const sendRes = await post("/send-message", {
+      from_id: senderId,
+      to_id: receiverId,
+      text: "Please review this PR",
+      type: "handoff",
+      metadata,
+    });
+    const sendData = (await sendRes.json()) as { ok: boolean; message_id: number };
+    expect(sendData.ok).toBe(true);
+
+    const pollRes = await post("/poll-messages", { id: receiverId });
+    const pollData = (await pollRes.json()) as { messages: Array<{ id: number; type: string; metadata: Record<string, unknown> | null }> };
+    const msg = pollData.messages.find((m) => m.id === sendData.message_id);
+    expect(msg).toBeDefined();
+    expect(msg!.type).toBe("handoff");
+    expect(msg!.metadata).toEqual(metadata);
+    // Verify metadata is an object, not a string
+    expect(typeof msg!.metadata).toBe("object");
+    expect(Array.isArray(msg!.metadata)).toBe(false);
+
+    // Clean up
+    await post("/ack-messages", { id: receiverId, message_ids: pollData.messages.map((m) => m.id) });
+  });
+
+  test("Send message with reply_to referencing existing message succeeds", async () => {
+    // Send message A
+    const sendA = await post("/send-message", {
+      from_id: senderId,
+      to_id: receiverId,
+      text: "Original message",
+    });
+    const dataA = (await sendA.json()) as { ok: boolean; message_id: number };
+    expect(dataA.ok).toBe(true);
+
+    // Send message B replying to A
+    const sendB = await post("/send-message", {
+      from_id: receiverId,
+      to_id: senderId,
+      text: "Reply to original",
+      type: "response",
+      reply_to: dataA.message_id,
+    });
+    const dataB = (await sendB.json()) as { ok: boolean; message_id: number };
+    expect(dataB.ok).toBe(true);
+
+    // Poll sender to verify reply_to
+    const pollRes = await post("/poll-messages", { id: senderId });
+    const pollData = (await pollRes.json()) as { messages: Array<{ id: number; reply_to: number | null; type: string }> };
+    const replyMsg = pollData.messages.find((m) => m.id === dataB.message_id);
+    expect(replyMsg).toBeDefined();
+    expect(replyMsg!.reply_to).toBe(dataA.message_id);
+    expect(replyMsg!.type).toBe("response");
+
+    // Clean up
+    await post("/ack-messages", { id: senderId, message_ids: pollData.messages.map((m) => m.id) });
+    const pollRecv = await post("/poll-messages", { id: receiverId });
+    const pollRecvData = (await pollRecv.json()) as { messages: Array<{ id: number }> };
+    if (pollRecvData.messages.length > 0) {
+      await post("/ack-messages", { id: receiverId, message_ids: pollRecvData.messages.map((m) => m.id) });
+    }
+  });
+
+  test("Send message with reply_to referencing nonexistent message fails", async () => {
+    const res = await post("/send-message", {
+      from_id: senderId,
+      to_id: receiverId,
+      text: "Reply to nothing",
+      reply_to: 999999,
+    });
+    const data = (await res.json()) as { ok: boolean; error: string };
+    expect(data.ok).toBe(false);
+    expect(data.error).toContain("not found");
+  });
+
+  test("Send message with invalid metadata (non-object) fails", async () => {
+    const res = await post("/send-message", {
+      from_id: senderId,
+      to_id: receiverId,
+      text: "Bad metadata",
+      metadata: "not an object" as any,
+    });
+    const data = (await res.json()) as { ok: boolean; error: string };
+    expect(data.ok).toBe(false);
+    expect(data.error).toContain("metadata must be a JSON object");
+  });
+
+  test("Send message without type field defaults to 'text'", async () => {
+    const sendRes = await post("/send-message", {
+      from_id: senderId,
+      to_id: receiverId,
+      text: "Plain message with no type",
+    });
+    const sendData = (await sendRes.json()) as { ok: boolean; message_id: number };
+    expect(sendData.ok).toBe(true);
+
+    const pollRes = await post("/poll-messages", { id: receiverId });
+    const pollData = (await pollRes.json()) as { messages: Array<{ id: number; type: string }> };
+    const msg = pollData.messages.find((m) => m.id === sendData.message_id);
+    expect(msg).toBeDefined();
+    expect(msg!.type).toBe("text");
+
+    // Clean up
+    await post("/ack-messages", { id: receiverId, message_ids: pollData.messages.map((m) => m.id) });
+  });
+
+  test("Send message with invalid type value fails", async () => {
+    const res = await post("/send-message", {
+      from_id: senderId,
+      to_id: receiverId,
+      text: "Invalid type",
+      type: "invalid_type",
+    });
+    const data = (await res.json()) as { ok: boolean; error: string };
+    expect(data.ok).toBe(false);
+    expect(data.error).toContain("Invalid message type");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Broadcast
+// ---------------------------------------------------------------------------
+
+describe("Broadcast", () => {
+  let peerA: string;
+  let peerB: string;
+  let peerC: string;
+  let sleepProc: ReturnType<typeof Bun.spawn>;
+
+  beforeAll(async () => {
+    // Spawn a sleep process for peer C's PID (so liveness check passes)
+    sleepProc = Bun.spawn(["sleep", "60"], { stdio: ["ignore", "ignore", "ignore"] });
+
+    // Register 3 peers with different PIDs
+    peerA = await registerPeer({ cwd: "/tmp/bcast-a", git_root: "/tmp/repo1" });
+
+    const resB = await post("/register", {
+      pid: process.pid,
+      cwd: "/tmp/bcast-b",
+      git_root: "/tmp/repo1",
+      tty: null,
+      session_name: "peer-b",
+      summary: "",
+    });
+    peerB = ((await resB.json()) as { id: string }).id;
+
+    const resC = await post("/register", {
+      pid: sleepProc.pid,
+      cwd: "/tmp/bcast-c",
+      git_root: "/tmp/repo2",
+      tty: null,
+      session_name: "peer-c",
+      summary: "",
+    });
+    peerC = ((await resC.json()) as { id: string }).id;
+  });
+
+  afterAll(() => {
+    try { sleepProc?.kill(); } catch {}
+  });
+
+  test("Broadcast to machine scope reaches all peers except sender", async () => {
+    const res = await post("/broadcast", {
+      from_id: peerA,
+      text: "Hello everyone!",
+      scope: "machine",
+      cwd: "/tmp/bcast-a",
+      git_root: "/tmp/repo1",
+    });
+    const data = (await res.json()) as { ok: boolean; recipients: number; message_ids: number[] };
+    expect(data.ok).toBe(true);
+    expect(data.recipients).toBeGreaterThanOrEqual(2);
+
+    // Poll B: should have the message
+    const pollB = await post("/poll-messages", { id: peerB });
+    const pollBData = (await pollB.json()) as { messages: Array<{ text: string; from_id: string }> };
+    const msgB = pollBData.messages.find((m) => m.text === "Hello everyone!");
+    expect(msgB).toBeDefined();
+    expect(msgB!.from_id).toBe(peerA);
+
+    // Poll C: should have the message
+    const pollC = await post("/poll-messages", { id: peerC });
+    const pollCData = (await pollC.json()) as { messages: Array<{ text: string; from_id: string }> };
+    const msgC = pollCData.messages.find((m) => m.text === "Hello everyone!");
+    expect(msgC).toBeDefined();
+
+    // Poll A: sender should NOT have a message from broadcast
+    const pollA = await post("/poll-messages", { id: peerA });
+    const pollAData = (await pollA.json()) as { messages: Array<{ text: string }> };
+    const msgA = pollAData.messages.find((m) => m.text === "Hello everyone!");
+    expect(msgA).toBeUndefined();
+
+    // Clean up
+    if (pollBData.messages.length > 0) await post("/ack-messages", { id: peerB, message_ids: pollBData.messages.map((m: any) => m.id) });
+    if (pollCData.messages.length > 0) await post("/ack-messages", { id: peerC, message_ids: pollCData.messages.map((m: any) => m.id) });
+    if (pollAData.messages.length > 0) await post("/ack-messages", { id: peerA, message_ids: pollAData.messages.map((m: any) => m.id) });
+  });
+
+  test("Broadcast returns correct recipients count and message_ids", async () => {
+    const res = await post("/broadcast", {
+      from_id: peerA,
+      text: "Count test",
+      scope: "machine",
+      cwd: "/tmp/bcast-a",
+      git_root: "/tmp/repo1",
+    });
+    const data = (await res.json()) as { ok: boolean; recipients: number; message_ids: number[] };
+    expect(data.ok).toBe(true);
+    expect(data.recipients).toBeGreaterThanOrEqual(2);
+    expect(data.message_ids.length).toBe(data.recipients);
+    for (const mid of data.message_ids) {
+      expect(typeof mid).toBe("number");
+      expect(mid).toBeGreaterThan(0);
+    }
+
+    // Clean up
+    for (const peerId of [peerB, peerC]) {
+      const poll = await post("/poll-messages", { id: peerId });
+      const pollData = (await poll.json()) as { messages: Array<{ id: number }> };
+      if (pollData.messages.length > 0) {
+        await post("/ack-messages", { id: peerId, message_ids: pollData.messages.map((m) => m.id) });
+      }
+    }
+  });
+
+  test("Broadcast with scope 'directory' only reaches same-directory peers", async () => {
+    // peerA and peerB are in different dirs (/tmp/bcast-a, /tmp/bcast-b)
+    // Register a peer D in same dir as A
+    const resD = await post("/register", {
+      pid: sleepProc.pid, // reuse sleep proc PID (replaces peerC registration)
+      cwd: "/tmp/bcast-a",
+      git_root: "/tmp/repo1",
+      tty: null,
+      session_name: "peer-d",
+      summary: "",
+    });
+    const peerD = ((await resD.json()) as { id: string }).id;
+
+    const res = await post("/broadcast", {
+      from_id: peerA,
+      text: "Directory scoped message",
+      scope: "directory",
+      cwd: "/tmp/bcast-a",
+      git_root: "/tmp/repo1",
+    });
+    const data = (await res.json()) as { ok: boolean; recipients: number };
+    expect(data.ok).toBe(true);
+
+    // Poll D: should have the message (same directory)
+    const pollD = await post("/poll-messages", { id: peerD });
+    const pollDData = (await pollD.json()) as { messages: Array<{ text: string }> };
+    const msgD = pollDData.messages.find((m) => m.text === "Directory scoped message");
+    expect(msgD).toBeDefined();
+
+    // Poll B: should NOT have the message (different directory)
+    const pollB = await post("/poll-messages", { id: peerB });
+    const pollBData = (await pollB.json()) as { messages: Array<{ text: string }> };
+    const msgB = pollBData.messages.find((m) => m.text === "Directory scoped message");
+    expect(msgB).toBeUndefined();
+
+    // Clean up
+    if (pollDData.messages.length > 0) await post("/ack-messages", { id: peerD, message_ids: pollDData.messages.map((m: any) => m.id) });
+    if (pollBData.messages.length > 0) await post("/ack-messages", { id: peerB, message_ids: pollBData.messages.map((m: any) => m.id) });
+
+    // Re-register peerC for subsequent tests
+    const resC2 = await post("/register", {
+      pid: sleepProc.pid,
+      cwd: "/tmp/bcast-c",
+      git_root: "/tmp/repo2",
+      tty: null,
+      session_name: "peer-c",
+      summary: "",
+    });
+    peerC = ((await resC2.json()) as { id: string }).id;
+  });
+
+  test("Broadcast with scope 'repo' only reaches same-repo peers", async () => {
+    // peerA: git_root /tmp/repo1, peerB: git_root /tmp/repo1, peerC: git_root /tmp/repo2
+    const res = await post("/broadcast", {
+      from_id: peerA,
+      text: "Repo scoped message",
+      scope: "repo",
+      cwd: "/tmp/bcast-a",
+      git_root: "/tmp/repo1",
+    });
+    const data = (await res.json()) as { ok: boolean; recipients: number };
+    expect(data.ok).toBe(true);
+
+    // Poll B: should have the message (same git_root)
+    const pollB = await post("/poll-messages", { id: peerB });
+    const pollBData = (await pollB.json()) as { messages: Array<{ text: string }> };
+    const msgB = pollBData.messages.find((m) => m.text === "Repo scoped message");
+    expect(msgB).toBeDefined();
+
+    // Poll C: should NOT have the message (different git_root)
+    const pollC = await post("/poll-messages", { id: peerC });
+    const pollCData = (await pollC.json()) as { messages: Array<{ text: string }> };
+    const msgC = pollCData.messages.find((m) => m.text === "Repo scoped message");
+    expect(msgC).toBeUndefined();
+
+    // Clean up
+    if (pollBData.messages.length > 0) await post("/ack-messages", { id: peerB, message_ids: pollBData.messages.map((m: any) => m.id) });
+    if (pollCData.messages.length > 0) await post("/ack-messages", { id: peerC, message_ids: pollCData.messages.map((m: any) => m.id) });
+  });
+
+  test("Broadcast to scope with no other peers returns zero recipients", async () => {
+    // Register a lonely peer in a unique directory
+    const resLonely = await post("/register", {
+      pid: sleepProc.pid,
+      cwd: "/tmp/lonely-dir-unique",
+      git_root: null,
+      tty: null,
+      session_name: "lonely",
+      summary: "",
+    });
+    const lonelyId = ((await resLonely.json()) as { id: string }).id;
+
+    const res = await post("/broadcast", {
+      from_id: lonelyId,
+      text: "Anyone there?",
+      scope: "directory",
+      cwd: "/tmp/lonely-dir-unique",
+      git_root: null,
+    });
+    const data = (await res.json()) as { ok: boolean; recipients: number; message_ids: number[] };
+    expect(data.ok).toBe(true);
+    expect(data.recipients).toBe(0);
+    expect(data.message_ids).toEqual([]);
+
+    // Re-register peerC for subsequent tests
+    const resC3 = await post("/register", {
+      pid: sleepProc.pid,
+      cwd: "/tmp/bcast-c",
+      git_root: "/tmp/repo2",
+      tty: null,
+      session_name: "peer-c",
+      summary: "",
+    });
+    peerC = ((await resC3.json()) as { id: string }).id;
+  });
+
+  test("Broadcast respects 10KB message size limit", async () => {
+    const bigText = "x".repeat(10241);
+    const res = await post("/broadcast", {
+      from_id: peerA,
+      text: bigText,
+      scope: "machine",
+      cwd: "/tmp/bcast-a",
+      git_root: "/tmp/repo1",
+    });
+    const data = (await res.json()) as { ok: boolean; error?: string };
+    expect(data.ok).toBe(false);
+    expect(data.error).toContain("too large");
+  });
+
+  test("Broadcast sets type to 'broadcast' by default", async () => {
+    const res = await post("/broadcast", {
+      from_id: peerA,
+      text: "Default type test",
+      scope: "machine",
+      cwd: "/tmp/bcast-a",
+      git_root: "/tmp/repo1",
+    });
+    const data = (await res.json()) as { ok: boolean; recipients: number };
+    expect(data.ok).toBe(true);
+
+    // Poll a recipient and check type
+    const pollB = await post("/poll-messages", { id: peerB });
+    const pollBData = (await pollB.json()) as { messages: Array<{ text: string; type: string }> };
+    const msg = pollBData.messages.find((m) => m.text === "Default type test");
+    expect(msg).toBeDefined();
+    expect(msg!.type).toBe("broadcast");
+
+    // Clean up
+    if (pollBData.messages.length > 0) await post("/ack-messages", { id: peerB, message_ids: pollBData.messages.map((m: any) => m.id) });
+    const pollC = await post("/poll-messages", { id: peerC });
+    const pollCData = (await pollC.json()) as { messages: Array<{ id: number }> };
+    if (pollCData.messages.length > 0) await post("/ack-messages", { id: peerC, message_ids: pollCData.messages.map((m) => m.id) });
+  });
+
+  test("Broadcast requires auth (401 without token)", async () => {
+    const res = await postNoAuth("/broadcast", {
+      from_id: peerA,
+      text: "No auth",
+      scope: "machine",
+      cwd: "/tmp/bcast-a",
+      git_root: "/tmp/repo1",
+    });
+    expect(res.status).toBe(401);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Edge Cases (must run BEFORE rate-limit test which exhausts the window)
 // ---------------------------------------------------------------------------
 

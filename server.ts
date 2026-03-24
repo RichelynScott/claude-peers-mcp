@@ -24,7 +24,9 @@ import type {
   Peer,
   RegisterResponse,
   PollMessagesResponse,
+  BroadcastResponse,
   Message,
+  MessageType,
 } from "./shared/types.ts";
 import {
   generateSummary,
@@ -191,11 +193,12 @@ const mcp = new Server(
 
 IMPORTANT: When you receive a <channel source="claude-peers" ...> message, RESPOND IMMEDIATELY. Do not wait until your current task is finished. Pause what you are doing, reply to the message using send_message, then resume your work. Treat incoming peer messages like a coworker tapping you on the shoulder — answer right away, even if you're in the middle of something.
 
-Read the from_id, from_summary, and from_cwd attributes to understand who sent the message. Reply by calling send_message with their from_id.
+Read the from_id, from_summary, and from_cwd attributes to understand who sent the message. Reply by calling send_message with their from_id. Check the type attribute for message intent: "query" means they're asking a question, "handoff" means task delegation, "response" means a reply to a previous message, "broadcast" means a group announcement.
 
 Available tools:
 - list_peers: Discover other Claude Code instances (scope: machine/directory/repo)
-- send_message: Send a message to another instance by ID
+- send_message: Send a message to another instance by ID. Supports optional type (text/query/response/handoff/broadcast), metadata (JSON object), and reply_to (message ID for threading).
+- broadcast_message: Send a message to all peers in a scope (machine/directory/repo). Useful for announcements, help requests, or coordination.
 - set_summary: Set a 1-2 sentence summary of what you're working on (visible to other peers)
 - set_name: Set your session name (from /rename). Helps peers identify you by name instead of opaque ID.
 - check_messages: Manually check for new messages
@@ -239,6 +242,19 @@ const TOOLS = [
           type: "string" as const,
           description: "The message to send",
         },
+        type: {
+          type: "string" as const,
+          enum: ["text", "query", "response", "handoff", "broadcast"],
+          description: 'Message type. Defaults to "text". Use "query" for questions expecting a response, "response" for replies, "handoff" for task delegation.',
+        },
+        metadata: {
+          type: "object" as const,
+          description: "Optional structured metadata. For handoff: { task, files?, context? }. For query/response: { topic? }.",
+        },
+        reply_to: {
+          type: "number" as const,
+          description: "Message ID to reply to (for threading). The referenced message must exist.",
+        },
       },
       required: ["to_id", "message"],
     },
@@ -280,6 +296,26 @@ const TOOLS = [
     inputSchema: {
       type: "object" as const,
       properties: {},
+    },
+  },
+  {
+    name: "broadcast_message",
+    description:
+      "Send a message to all Claude Code instances in a scope (machine, directory, or repo). Useful for announcements, help requests, or coordination.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        message: {
+          type: "string" as const,
+          description: "The message to broadcast",
+        },
+        scope: {
+          type: "string" as const,
+          enum: ["machine", "directory", "repo"],
+          description: 'Scope of broadcast. "machine" = all instances. "directory" = same working directory. "repo" = same git repository.',
+        },
+      },
+      required: ["message", "scope"],
     },
   },
 ];
@@ -351,7 +387,13 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
 
     case "send_message": {
-      const { to_id, message } = args as { to_id: string; message: string };
+      const { to_id, message, type: msgType, metadata, reply_to } = args as {
+        to_id: string;
+        message: string;
+        type?: MessageType;
+        metadata?: Record<string, unknown>;
+        reply_to?: number;
+      };
       if (!myId) {
         return {
           content: [{ type: "text" as const, text: "Not registered with broker yet" }],
@@ -359,11 +401,15 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         };
       }
       try {
-        const result = await brokerFetch<{ ok: boolean; error?: string; message_id?: number }>("/send-message", {
+        const sendBody: Record<string, unknown> = {
           from_id: myId,
           to_id,
           text: message,
-        });
+        };
+        if (msgType) sendBody.type = msgType;
+        if (metadata) sendBody.metadata = metadata;
+        if (reply_to !== undefined) sendBody.reply_to = reply_to;
+        const result = await brokerFetch<{ ok: boolean; error?: string; message_id?: number }>("/send-message", sendBody);
         if (!result.ok) {
           return {
             content: [{ type: "text" as const, text: `Failed to send: ${result.error}` }],
@@ -464,9 +510,19 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
             content: [{ type: "text" as const, text: "No new messages." }],
           };
         }
-        const lines = result.messages.map(
-          (m) => `From ${m.from_id} (${m.sent_at}):\n${m.text}`
-        );
+        const lines = result.messages.map((m) => {
+          let prefix = "";
+          if (m.type === "query") prefix = "[QUERY] ";
+          else if (m.type === "response") prefix = `[RESPONSE]${m.reply_to ? ` re: msg#${m.reply_to}` : ""} `;
+          else if (m.type === "handoff") prefix = "[HANDOFF] ";
+          else if (m.type === "broadcast") prefix = "[BROADCAST] ";
+          // "text" type: no prefix (backward compatible)
+          let line = `${prefix}From ${m.from_id} (${m.sent_at}):\n${m.text}`;
+          if (m.metadata) {
+            line += `\nMetadata: ${JSON.stringify(m.metadata)}`;
+          }
+          return line;
+        });
         return {
           content: [
             {
@@ -481,6 +537,59 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
             {
               type: "text" as const,
               text: `Error checking messages: ${e instanceof Error ? e.message : String(e)}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+
+    case "broadcast_message": {
+      const { message, scope } = args as { message: string; scope: "machine" | "directory" | "repo" };
+      if (!myId) {
+        return {
+          content: [{ type: "text" as const, text: "Not registered with broker yet" }],
+          isError: true,
+        };
+      }
+      try {
+        const result = await brokerFetch<BroadcastResponse>("/broadcast", {
+          from_id: myId,
+          text: message,
+          type: "broadcast",
+          scope,
+          cwd: myCwd,
+          git_root: myGitRoot,
+        });
+        if (!result.ok) {
+          return {
+            content: [{ type: "text" as const, text: `Broadcast failed: ${result.error}` }],
+            isError: true,
+          };
+        }
+        if (result.recipients === 0) {
+          return {
+            content: [{ type: "text" as const, text: `No peers found in scope '${scope}'. Broadcast not sent.` }],
+          };
+        }
+        // Log outbound broadcast
+        const timestamp = new Date().toLocaleTimeString();
+        log(`--- BROADCAST SENT ---\n[${timestamp}] To ${result.recipients} peer(s) in scope '${scope}':\n${message}\n--- END BROADCAST ---`);
+        try {
+          const entry = `\n${"=".repeat(60)}\n[${timestamp}] BROADCAST to ${result.recipients} peer(s) in scope '${scope}':\n${message}\n`;
+          await Bun.write(Bun.file(MSG_LOG_PATH), entry, { append: true });
+        } catch {
+          // Non-critical
+        }
+        return {
+          content: [{ type: "text" as const, text: `Broadcast sent to ${result.recipients} peer(s) in scope '${scope}'` }],
+        };
+      } catch (e) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Error broadcasting: ${e instanceof Error ? e.message : String(e)}`,
             },
           ],
           isError: true,
@@ -537,6 +646,9 @@ async function pollAndPushMessages() {
             from_summary: fromSummary,
             from_cwd: fromCwd,
             sent_at: msg.sent_at,
+            type: msg.type ?? "text",
+            metadata: msg.metadata ?? null,
+            reply_to: msg.reply_to ?? null,
           },
         },
       });
@@ -547,12 +659,13 @@ async function pollAndPushMessages() {
       // Full message log for observability (stderr + file)
       const senderLabel = fromName || msg.from_id;
       const timestamp = new Date().toLocaleTimeString();
+      const typeTag = msg.type && msg.type !== "text" ? `[${msg.type.toUpperCase()}] ` : "";
       // Build bullet summary: first 3 lines, truncated
       const lines = msg.text.split("\n").filter((l: string) => l.trim());
       const bullets = lines.slice(0, 3).map((l: string) => `  • ${l.slice(0, 100)}${l.length > 100 ? "..." : ""}`).join("\n");
       const summaryLine = lines.length > 3 ? `\n  (${lines.length - 3} more lines)` : "";
-      const logEntry = `[${timestamp}] From ${senderLabel} (${msg.from_id}):\n${bullets}${summaryLine}\n\nFull message:\n${msg.text}`;
-      log(`--- MESSAGE RECEIVED ---\n[${timestamp}] From ${senderLabel} (${msg.from_id}):\n${bullets}${summaryLine}\n--- END MESSAGE ---`);
+      const logEntry = `[${timestamp}] ${typeTag}From ${senderLabel} (${msg.from_id}):\n${bullets}${summaryLine}\n\nFull message:\n${msg.text}`;
+      log(`--- MESSAGE RECEIVED ---\n[${timestamp}] ${typeTag}From ${senderLabel} (${msg.from_id}):\n${bullets}${summaryLine}\n--- END MESSAGE ---`);
 
       // Append to persistent message log for tail -f monitoring
       try {

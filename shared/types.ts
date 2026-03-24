@@ -1,6 +1,9 @@
 // Unique ID for each Claude Code instance (generated on registration)
 export type PeerId = string;
 
+// Message type enum for semantic routing
+export type MessageType = "text" | "query" | "response" | "handoff" | "broadcast";
+
 export interface Peer {
   id: PeerId;
   pid: number;
@@ -18,6 +21,9 @@ export interface Message {
   from_id: PeerId;
   to_id: PeerId;
   text: string;
+  type: MessageType;
+  metadata: Record<string, unknown> | null;
+  reply_to: number | null;
   sent_at: string; // ISO timestamp
   delivered: boolean;
 }
@@ -63,6 +69,26 @@ export interface SendMessageRequest {
   from_id: PeerId;
   to_id: PeerId;
   text: string;
+  type?: MessageType;
+  metadata?: Record<string, unknown>;
+  reply_to?: number;
+}
+
+export interface BroadcastRequest {
+  from_id: PeerId;
+  text: string;
+  type?: MessageType;
+  metadata?: Record<string, unknown>;
+  scope: "machine" | "directory" | "repo";
+  cwd: string;
+  git_root: string | null;
+}
+
+export interface BroadcastResponse {
+  ok: boolean;
+  recipients: number;
+  message_ids: number[];
+  error?: string;
 }
 
 export interface PollMessagesRequest {
