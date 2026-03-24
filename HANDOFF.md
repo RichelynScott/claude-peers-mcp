@@ -2,31 +2,28 @@
 
 ## IMMEDIATE NEXT ACTION
 
-**LAN Federation is RESEARCH-COMPLETE. Three paths forward:**
+**LAN Federation PRD bugs FIXED. Ready to implement Phase A:**
 
-1. **Fix PRD bugs → implement Phase A** — The PRD has 3 bugs identified by PAL consensus. Fix them, then either:
+1. **Implement Phase A** — prd.json has all 3 PAL consensus bugs fixed (`d1a5f31`). Two options:
    - a. Run Ralph (`ralph.sh --tool claude`) using `tasks/ralph/prd-lan-discovery-phase-a.json` (13 stories)
    - b. Manual implementation with subagents
 2. **hcom bridge** — Small (~50-80 lines). Forward claude-peers discovery to hcom event log. No PRD — direct subagent task.
 3. **clink dual-bus** — Small (~20-30 lines). PAL's clink registers spawned agents with both hcom AND claude-peers. No PRD — direct subagent task.
 
-### PRD Bugs to Fix Before Phase A Implementation
+### PRD Bugs FIXED (commit `d1a5f31`)
 
-| Bug | Location | Fix |
-|-----|----------|-----|
-| Auth confusion | US-A12 | Federation endpoints use PSK only (not bearer+PSK). Local broker endpoints use bearer only. |
-| Routing ambiguity | FR-5 / US-A12 | Remove `/federation/send-to-remote` — use in-process function call instead |
-| HMAC canonicalization | Technical section | Document that `Object.keys().sort()` only handles top-level keys, or switch to recursive sort |
+| Bug | Location | Fix Applied |
+|-----|----------|-------------|
+| Auth confusion | US-006 | Federation endpoints use PSK only (not bearer+PSK) |
+| Routing ambiguity | US-011 | In-process function call, not `/federation/send-to-remote` |
+| HMAC canonicalization | US-005 | Documented top-level-only sorting as known limitation |
 
-### Implementation Gotchas (from research)
+### Implementation Gotchas (baked into prd.json notes)
 
-- **Ed25519 certs** (not RSA-2048): `openssl genpkey -algorithm Ed25519 -out key.pem && openssl req -new -x509 -key key.pem -out cert.pem -days 365 -subj "/CN=$(hostname)"`
-- **WSL2 subnet detection**: Use `ip route show default`, NOT `os.networkInterfaces()` (returns 172.x.x.x)
-- **PID liveness bypass**: Relay endpoint must skip `process.kill(pid,0)` for remote `from_id`s
-- **Hostname normalization**: Lowercase, truncate >63 chars, reject colons at startup
-- **Federation startup**: Wrap in try/catch — graceful degradation if TLS or port binding fails
-- **Tailscale**: `/32` routes need special handling in subnet detection
-- **`fetch()` TLS**: `tls: { rejectUnauthorized: false }` works in Bun (verified)
+All gotchas from research are now embedded as `notes` on relevant stories in prd.json:
+- Ed25519 certs (US-002), WSL2 subnet detection (US-004), PID liveness bypass (US-006)
+- Hostname normalization (US-002), federation try/catch (US-003), Tailscale /32 (US-004)
+- fetch() TLS rejectUnauthorized:false (US-007)
 
 ## COMPLETED THIS SESSION
 
@@ -35,15 +32,16 @@
 | Deep research report | `9007d28` | 14 sources, 296 lines at `.firecrawl/deep-research-lan-discovery.md` |
 | FYI.md deep research entry | `1ae4067` | Research findings documented |
 | PAL consensus + local verification | `7f452e9` | 4-model consensus (avg 8.25/10), 5 Bun smoke tests (all PASS) |
+| PRD bug fixes in prd.json | `d1a5f31` | 3 bugs fixed, research gotchas baked into story notes |
 
-**Research pipeline completed: Phase 0 (deep research) → Phase 1 (local verification) → Phase 2 (PAL consensus) → Phase 3 (synthesis)**
+**Research pipeline completed: Phase 0 (deep research) → Phase 1 (local verification) → Phase 2 (PAL consensus) → Phase 3 (synthesis) → Phase 4 (prd.json bug fixes)**
 
 ## KEY FILES FOR CONTEXT
 
 | File | Purpose |
 |------|---------|
-| `tasks/prd-lan-discovery.md` | LAN federation PRD (3 phases, 577 lines) — HAS 3 BUGS to fix |
-| `tasks/ralph/prd-lan-discovery-phase-a.json` | Ralph JSON for Phase A (13 stories) |
+| `tasks/prd-lan-discovery.md` | LAN federation PRD (3 phases, 577 lines) — original PRD (bugs in prose, fixed in prd.json) |
+| `tasks/ralph/prd-lan-discovery-phase-a.json` | Ralph JSON for Phase A (13 stories) — BUGS FIXED in `d1a5f31` |
 | `.firecrawl/deep-research-lan-discovery.md` | Deep research report (296 lines, 14 sources) |
 | `FYI.md` | Decision journal with PAL consensus findings |
 | `memory/project_lan_discovery.md` | Memory file with consolidated research conclusions |
