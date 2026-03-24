@@ -79,8 +79,21 @@ function cleanStalePeers() {
 
 cleanStalePeers();
 
+// Clean delivered messages older than 7 days
+function cleanDeliveredMessages() {
+  const result = deleteDeliveredMessages.run();
+  if (result.changes > 0) {
+    console.error(`[claude-peers broker] cleaned ${result.changes} delivered messages older than 7 days`);
+  }
+}
+
+cleanDeliveredMessages();
+
 // Periodically clean stale peers (every 30s)
 setInterval(cleanStalePeers, 30_000);
+
+// Periodically clean delivered messages (every 60s)
+setInterval(cleanDeliveredMessages, 60_000);
 
 // --- Prepared statements ---
 
@@ -128,6 +141,10 @@ const selectUndelivered = db.prepare(`
 
 const markDelivered = db.prepare(`
   UPDATE messages SET delivered = 1 WHERE id = ?
+`);
+
+const deleteDeliveredMessages = db.prepare(`
+  DELETE FROM messages WHERE delivered = 1 AND sent_at < datetime('now', '-7 days')
 `);
 
 // --- Generate peer ID ---
@@ -210,6 +227,11 @@ function handleListPeers(body: ListPeersRequest): Peer[] {
 }
 
 function handleSendMessage(body: SendMessageRequest): { ok: boolean; error?: string } {
+  // Enforce message size limit (10KB)
+  if (body.text.length > 10240) {
+    return { ok: false, error: "Message too large (max 10KB)" };
+  }
+
   // Verify target exists
   const target = db.query("SELECT id FROM peers WHERE id = ?").get(body.to_id) as { id: string } | null;
   if (!target) {
@@ -235,6 +257,10 @@ function handleUnregister(body: { id: string }): void {
   deletePeer.run(body.id);
 }
 
+// --- Rate limiting ---
+
+const rateLimits = new Map<string, { count: number; resetAt: number }>();
+
 // --- HTTP Server ---
 
 Bun.serve({
@@ -244,10 +270,30 @@ Bun.serve({
     const url = new URL(req.url);
     const path = url.pathname;
 
-    if (req.method !== "POST") {
-      if (path === "/health") {
+    // Exempt /health from rate limiting
+    if (path === "/health") {
+      if (req.method !== "POST") {
         return Response.json({ status: "ok", peers: (selectAllPeers.all() as Peer[]).length });
       }
+    }
+
+    // Rate limiting: 60 requests per minute per IP
+    const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "127.0.0.1";
+    const now = Date.now();
+    const limit = rateLimits.get(ip);
+    if (limit && now < limit.resetAt) {
+      limit.count++;
+      if (limit.count > 60) {
+        return new Response(JSON.stringify({ error: "Rate limited" }), {
+          status: 429,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+    } else {
+      rateLimits.set(ip, { count: 1, resetAt: now + 60_000 });
+    }
+
+    if (req.method !== "POST") {
       return new Response("claude-peers broker", { status: 200 });
     }
 

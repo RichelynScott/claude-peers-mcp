@@ -1,5 +1,5 @@
 {
-  "indexed_at": "2026-03-24T11:38:34.242700",
+  "indexed_at": "2026-03-24T11:41:30.947290",
   "root": ".",
   "project_structure": {
     "type": "tree",
@@ -62,13 +62,13 @@
   },
   "directory_purposes": {},
   "stats": {
-    "total_files": 9,
+    "total_files": 10,
     "total_directories": 6,
     "fully_parsed": {
       "typescript": 6
     },
     "listed_only": {
-      "json": 3
+      "json": 4
     },
     "markdown_files": 3
   },
@@ -81,49 +81,19 @@
       "language": "typescript",
       "parsed": true,
       "functions": {
-        "brokerFetch": {
-          "signature": "async (path: string, body?: unknown): Promise<T>",
-          "called_by": [
-            "main",
-            "cleanup"
-          ]
-        }
+        "brokerFetch": "async (path: string, body?: unknown): Promise<T>"
       },
       "classes": {},
-      "constants": {
-        "BROKER_PORT": "value",
-        "BROKER_URL": "str"
-      },
-      "variables": [
-        "opts",
-        "res",
-        "cmd",
-        "health",
-        "peers",
-        "nameTag",
-        "parts",
-        "toId",
-        "msg",
-        "result",
-        "proc",
-        "pids"
-      ],
-      "call_graph": {}
+      "updated_by_hook": true,
+      "updated_at": "2026-03-24T11:46:58.462518"
     },
     "broker.ts": {
       "language": "typescript",
       "parsed": true,
-      "imports": [
-        "bun:sqlite"
-      ],
       "functions": {
         "cleanStalePeers": "()",
-        "generateId": {
-          "signature": "(): string",
-          "called_by": [
-            "handleRegister"
-          ]
-        },
+        "cleanDeliveredMessages": "()",
+        "generateId": "(): string",
         "handleRegister": {
           "calls": [
             "generateId"
@@ -139,37 +109,12 @@
         "handleUnregister": "(body: { id: string }): void"
       },
       "classes": {},
-      "constants": {
-        "PORT": "value",
-        "DB_PATH": "value"
-      },
-      "variables": [
-        "db",
-        "peers",
-        "insertPeer",
-        "updateLastSeen",
-        "updateSummary",
-        "updateName",
-        "deletePeer",
-        "selectAllPeers",
-        "selectPeersByDirectory",
-        "selectPeersByGitRoot",
-        "insertMessage",
-        "selectUndelivered",
-        "markDelivered",
-        "chars",
-        "id",
-        "i",
-        "now",
-        "existing",
-        "target",
-        "messages",
-        "url",
-        "path",
-        "body",
-        "msg"
-      ],
-      "call_graph": {}
+      "updated_by_hook": true,
+      "updated_at": "2026-03-24T11:47:06.674221"
+    },
+    "PROJECT_INDEX.json": {
+      "language": "json",
+      "parsed": false
     },
     "package.json": {
       "language": "json",
@@ -358,5 +303,5 @@
       "shared/summarize.ts"
     ]
   },
-  "staleness_check": 1773761914.292571
+  "staleness_check": 1773762090.999892
 }

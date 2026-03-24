@@ -5,10 +5,11 @@
  * Utility commands for managing the broker and inspecting peers.
  *
  * Usage:
- *   bun cli.ts status          — Show broker status and all peers
- *   bun cli.ts peers           — List all peers
- *   bun cli.ts send <id> <msg> — Send a message to a peer
- *   bun cli.ts kill-broker     — Stop the broker daemon
+ *   bun cli.ts status               — Show broker status and all peers
+ *   bun cli.ts peers                — List all peers
+ *   bun cli.ts send <id> <msg>      — Send a message to a peer
+ *   bun cli.ts set-name <id> <name> — Set a peer's session name
+ *   bun cli.ts kill-broker          — Stop the broker daemon
  */
 
 const BROKER_PORT = parseInt(process.env.CLAUDE_PEERS_PORT ?? "7899", 10);
@@ -133,6 +134,29 @@ switch (cmd) {
     break;
   }
 
+  case "set-name": {
+    const peerId = process.argv[3];
+    const name = process.argv.slice(4).join(" ");
+    if (!peerId || !name) {
+      console.error("Usage: bun cli.ts set-name <peer-id> <name>");
+      process.exit(1);
+    }
+    try {
+      const result = await brokerFetch<{ ok: boolean }>("/set-name", {
+        id: peerId,
+        session_name: name,
+      });
+      if (result.ok) {
+        console.log(`Session name set for ${peerId}: "${name}"`);
+      } else {
+        console.error("Failed to set session name.");
+      }
+    } catch (e) {
+      console.error(`Error: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    break;
+  }
+
   case "kill-broker": {
     try {
       const health = await brokerFetch<{ status: string; peers: number }>("/health");
@@ -158,8 +182,9 @@ switch (cmd) {
     console.log(`claude-peers CLI
 
 Usage:
-  bun cli.ts status          Show broker status and all peers
-  bun cli.ts peers           List all peers
-  bun cli.ts send <id> <msg> Send a message to a peer
-  bun cli.ts kill-broker     Stop the broker daemon`);
+  bun cli.ts status               Show broker status and all peers
+  bun cli.ts peers                List all peers
+  bun cli.ts send <id> <msg>      Send a message to a peer
+  bun cli.ts set-name <id> <name> Set a peer's session name
+  bun cli.ts kill-broker          Stop the broker daemon`);
 }
