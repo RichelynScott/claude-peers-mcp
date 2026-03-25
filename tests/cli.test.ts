@@ -38,20 +38,20 @@ describe("buildSummary", () => {
     const result = buildSummary({
       repoName: "claude-peers-mcp",
       branch: "main",
-      cwd: "/home/riche/MCPs/claude-peers-mcp",
+      cwd: "/home/user/claude-peers-mcp",
       taskCount: null,
     });
-    expect(result).toBe("[claude-peers-mcp:main] Working in /home/riche/MCPs/claude-peers-mcp");
+    expect(result).toBe("[claude-peers-mcp:main] Working in /home/user/claude-peers-mcp");
   });
 
   test("git repo + branch + zero tasks produces working-in format", () => {
     const result = buildSummary({
       repoName: "claude-peers-mcp",
       branch: "main",
-      cwd: "/home/riche/MCPs/claude-peers-mcp",
+      cwd: "/home/user/claude-peers-mcp",
       taskCount: 0,
     });
-    expect(result).toBe("[claude-peers-mcp:main] Working in /home/riche/MCPs/claude-peers-mcp");
+    expect(result).toBe("[claude-peers-mcp:main] Working in /home/user/claude-peers-mcp");
   });
 
   test("no git context produces working-in format without prefix", () => {
@@ -100,7 +100,7 @@ describe("buildSummary", () => {
 // ---------------------------------------------------------------------------
 
 describe("git helpers", () => {
-  const REPO_DIR = "/home/riche/MCPs/claude-peers-mcp";
+  const REPO_DIR = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 
   test("getGitRepoName returns repo basename in a git directory", () => {
     const result = getGitRepoName(REPO_DIR);
@@ -174,15 +174,16 @@ async function registerPeer(overrides: Record<string, unknown> = {}): Promise<st
   return data.id;
 }
 
-const CLI_PATH = "/home/riche/MCPs/claude-peers-mcp/src/cli.ts";
+const PROJECT_ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
+const CLI_PATH = `${PROJECT_ROOT}/src/cli.ts`;
 
 // Helper: run cli.ts as a subprocess with custom env
 async function runCli(
   args: string[],
   opts: { cwd?: string } = {}
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  const proc = Bun.spawn(["/home/riche/.bun/bin/bun", CLI_PATH, ...args], {
-    cwd: opts.cwd ?? "/home/riche/MCPs/claude-peers-mcp",
+  const proc = Bun.spawn(["bun", CLI_PATH, ...args], {
+    cwd: opts.cwd ?? PROJECT_ROOT,
     env: testEnv(),
     stdout: "pipe",
     stderr: "pipe",
@@ -209,8 +210,8 @@ describe("auto-summary integration", () => {
     testToken = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
     fs.writeFileSync(TEST_TOKEN_FILE, testToken + "\n", { mode: 0o600 });
 
-    brokerProc = Bun.spawn(["/home/riche/.bun/bin/bun", "src/broker.ts"], {
-      cwd: "/home/riche/MCPs/claude-peers-mcp",
+    brokerProc = Bun.spawn(["bun", "src/broker.ts"], {
+      cwd: PROJECT_ROOT,
       env: testEnv(),
       stdio: ["ignore", "ignore", "pipe"],
     });
@@ -304,8 +305,8 @@ describe("auto-summary integration", () => {
 
   test("auto-summary with broker down prints error and exits 1", async () => {
     // Use a port where no broker is running
-    const proc = Bun.spawn(["/home/riche/.bun/bin/bun", CLI_PATH, "auto-summary", "testpeer"], {
-      cwd: "/home/riche/MCPs/claude-peers-mcp",
+    const proc = Bun.spawn(["bun", CLI_PATH, "auto-summary", "testpeer"], {
+      cwd: PROJECT_ROOT,
       env: {
         ...testEnv(),
         CLAUDE_PEERS_PORT: "19999",

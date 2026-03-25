@@ -18,6 +18,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - PSK (pre-shared key) authentication for federation endpoints
 - HMAC-SHA256 message signing for federation requests
 - Zombie MCP server prevention — parent death detection and TTY-based eviction (`844bc33`)
+- Persistent config file (`~/.claude-peers-config.json`) for federation settings
+- Guided federation setup wizard (`bun src/cli.ts federation setup`)
 - 21 federation-specific tests bringing total to 100 tests, 302 assertions
 
 ### Fixed
@@ -29,6 +31,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - IP spoofing vulnerability — use `server.requestIP()` instead of `X-Forwarded-For` header
 - HMAC canonicalization — nested objects now preserved during signing
 - Bun `fetch()` TLS workaround — use `curl` for self-signed certificate connections
+- Token rotation support (`bun src/cli.ts rotate-token`)
+
+### Security
+- Removed exposed PSK token from repository, rotated credentials
 
 ### Removed
 - OpenAI dependency for auto-summary — replaced with deterministic git-based summary generation (`b629fee`)

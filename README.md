@@ -266,8 +266,8 @@ See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for diagnostic steps and 
 
 ## Requirements
 
-- [Bun](https://bun.sh) v1.1+ runtime
-- Claude Code v2.1.80+
+- [Bun](https://bun.sh) 1.x+ runtime
+- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) 2.1+
 - Claude.ai login (channel push requires it -- API key auth does not support channels)
 
 ## Fork Differences from Upstream

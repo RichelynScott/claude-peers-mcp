@@ -18,7 +18,7 @@ const TEST_DB = `/tmp/claude-peers-server-test-${Date.now()}.db`;
 const TEST_TOKEN_PATH = `/tmp/claude-peers-server-test-token-${Date.now()}`;
 const TEST_TOKEN = crypto.randomBytes(32).toString("hex");
 const BASE = `http://127.0.0.1:${TEST_PORT}`;
-const PROJECT_DIR = "/home/riche/MCPs/claude-peers-mcp";
+const PROJECT_DIR = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 
 let brokerProcess: ReturnType<typeof Bun.spawn>;
 let client: Client;

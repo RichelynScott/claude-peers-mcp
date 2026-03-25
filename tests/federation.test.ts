@@ -22,6 +22,7 @@ import {
 } from "../src/federation.ts";
 
 // --- Test configuration ---
+const PROJECT_ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const TEST_BROKER_PORT = 18901;
 const TEST_FEDERATION_PORT = 18900;
 const TEST_DB = `/tmp/claude-peers-federation-test-${crypto.randomUUID()}.db`;
@@ -193,7 +194,7 @@ beforeAll(async () => {
 
   // Start broker with federation enabled
   brokerProc = Bun.spawn(["bun", "src/broker.ts"], {
-    cwd: "/home/riche/MCPs/claude-peers-mcp",
+    cwd: PROJECT_ROOT,
     env: {
       ...process.env,
       CLAUDE_PEERS_PORT: String(TEST_BROKER_PORT),
@@ -263,7 +264,7 @@ describe("TLS & Startup", () => {
     fs.writeFileSync(noFedTokenPath, TEST_PSK + "\n", { mode: 0o600 });
 
     const noFedProc = Bun.spawn(["bun", "src/broker.ts"], {
-      cwd: "/home/riche/MCPs/claude-peers-mcp",
+      cwd: PROJECT_ROOT,
       env: {
         ...process.env,
         CLAUDE_PEERS_PORT: String(noFedPort),

@@ -7,6 +7,7 @@
 import { test, expect, describe, beforeAll, afterAll } from "bun:test";
 import * as fs from "node:fs";
 
+const PROJECT_ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const TEST_PORT = 17899;
 const TEST_DB = "/tmp/claude-peers-test.db";
 const TEST_TOKEN_PATH = `/tmp/claude-peers-test-token-${crypto.randomUUID()}`;
@@ -80,7 +81,7 @@ beforeAll(async () => {
   fs.writeFileSync(TEST_TOKEN_PATH, testToken + "\n", { mode: 0o600 });
 
   brokerProc = Bun.spawn(["bun", "src/broker.ts"], {
-    cwd: "/home/riche/MCPs/claude-peers-mcp",
+    cwd: PROJECT_ROOT,
     env: {
       ...process.env,
       CLAUDE_PEERS_PORT: String(TEST_PORT),
