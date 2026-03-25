@@ -820,34 +820,28 @@ async function main() {
   }, HEARTBEAT_INTERVAL_MS);
 
   // 8. Parent death detection — exit when the Claude session that spawned us dies.
-  // MCP servers communicate over stdio. When the parent closes stdin, we must exit.
-  // Without this, the MCP server becomes a zombie that keeps polling and consuming
-  // messages meant for the replacement session. This is the #1 cause of "messages
-  // not delivered" bugs.
-  process.stdin.on("end", () => {
-    log("stdin closed (parent session died) — exiting");
-    cleanup();
-  });
-  process.stdin.on("error", () => {
-    log("stdin error (parent session died) — exiting");
-    cleanup();
-  });
-  // Also check parent PID periodically — belt and suspenders
+  // DO NOT use process.stdin.on("end") — the MCP SDK's StdioServerTransport owns
+  // stdin, and attaching listeners causes premature exit on startup.
+  // Instead, periodically check if the parent PID is still alive.
+  let parentCheckTimer: ReturnType<typeof setInterval> | undefined;
   const ppid = process.ppid;
-  const parentCheckTimer = setInterval(() => {
-    try {
-      process.kill(ppid, 0); // Check if parent is alive (signal 0 = no-op)
-    } catch {
-      log(`Parent PID ${ppid} is dead — exiting`);
-      cleanup();
-    }
-  }, 5000);
+  if (ppid && ppid > 1) {
+    parentCheckTimer = setInterval(() => {
+      try {
+        process.kill(ppid, 0); // signal 0 = check if alive, don't actually send signal
+      } catch {
+        log(`Parent PID ${ppid} is dead — exiting`);
+        cleanup();
+      }
+    }, 5000);
+    parentCheckTimer.unref(); // Don't prevent process exit
+  }
 
   // 9. Clean up on exit
   const cleanup = async () => {
     clearInterval(pollTimer);
     clearInterval(heartbeatTimer);
-    clearInterval(parentCheckTimer);
+    if (parentCheckTimer) clearInterval(parentCheckTimer);
     if (myId) {
       try {
         await brokerFetch("/unregister", { id: myId });
