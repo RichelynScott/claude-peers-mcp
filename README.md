@@ -39,22 +39,29 @@ claude mcp add --scope user --transport stdio claude-peers \
   -- bun /path/to/claude-peers-mcp/src/server.ts
 ```
 
-### 3. Enable channel push
+### 3. Enable channel push (real-time message delivery)
 
-Channel push delivers messages instantly into your Claude Code session. Without it, messages must be polled manually via `check_messages`.
+Channel push delivers messages **instantly** into your Claude Code session as live interrupts. Without it, messages sit in the broker database and are **not visible** to your session — even `check_messages` will show nothing because the MCP server polls and acks them before Claude sees them.
 
-```bash
-claude --dangerously-load-development-channels server:claude-peers
-```
-
-**Recommended:** Add a shell wrapper so the flag is always included:
+**Add this shell wrapper** to your `~/.zshrc` (or `~/.bashrc`):
 
 ```bash
-# Add to ~/.zshrc or ~/.bashrc
-function claude() {
-  command claude --dangerously-load-development-channels server:claude-peers "$@"
+claude() {
+    command claude --dangerously-load-development-channels server:claude-peers "$@"
 }
 ```
+
+Then **open a new terminal** (the wrapper only loads in new shells). From now on, just type `claude` normally — the wrapper automatically adds the channel push flag. All your usual arguments still work:
+
+```bash
+claude                                    # normal launch (with channel push)
+claude --dangerously-skip-permissions     # autonomous mode (with channel push)
+claude --resume                           # resume session (with channel push)
+```
+
+> **Note:** When you first launch with this wrapper, Claude Code will show a confirmation prompt asking you to approve loading the `server:claude-peers` development channel. Accept it once and it remembers.
+
+> **Important:** The `--dangerously-load-development-channels` flag is required for Claude Code to display incoming messages from peers. Without it, the MCP server can send/receive at the protocol level but messages never surface in your conversation.
 
 ### 4. Use it
 
@@ -65,6 +72,12 @@ You: "Who else is working in this repo?"
 Claude: [calls list_peers with scope "repo"]
 Claude: "There's one other session working on the auth module..."
 ```
+
+**Tip:** Rename your sessions for easier identification:
+```
+/rename AUTH_WORKER
+```
+This calls `set_name` automatically, so other peers see "AUTH_WORKER" instead of an opaque 8-character ID. Name your sessions based on what they're working on — it makes multi-session collaboration much easier.
 
 ## LAN Federation
 
