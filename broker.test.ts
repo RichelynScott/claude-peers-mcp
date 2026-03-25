@@ -1012,3 +1012,98 @@ describe("Security & Limits", () => {
     expect(got429).toBe(true);
   });
 });
+
+// --- Zombie peer eviction tests ---
+describe("peer eviction on re-register", () => {
+  test("re-registering with same PID evicts old peer and preserves session_name", async () => {
+    // Register first peer
+    const res1 = await post("/register", {
+      pid: brokerProc.pid,
+      cwd: "/tmp/test-evict",
+      git_root: null,
+      tty: "/dev/pts/99",
+      session_name: "OriginalSession",
+      summary: "doing work",
+    });
+    const id1 = ((await res1.json()) as { id: string }).id;
+
+    // Re-register with same PID — should evict old peer and inherit session_name
+    const res2 = await post("/register", {
+      pid: brokerProc.pid,
+      cwd: "/tmp/test-evict",
+      git_root: null,
+      tty: "/dev/pts/99",
+      session_name: "",
+      summary: "",
+    });
+    const id2 = ((await res2.json()) as { id: string }).id;
+
+    expect(id2).not.toBe(id1);
+
+    // Old peer should be gone, new peer should have inherited name
+    const listRes = await post("/list-peers", { scope: "machine" });
+    const peers = (await listRes.json()) as Array<{ id: string; session_name: string }>;
+    const oldPeer = peers.find(p => p.id === id1);
+    const newPeer = peers.find(p => p.id === id2);
+    expect(oldPeer).toBeUndefined();
+    expect(newPeer).toBeDefined();
+    expect(newPeer!.session_name).toBe("OriginalSession");
+  });
+
+  test("re-registering with same TTY but different PID evicts old peer (zombie prevention)", async () => {
+    const sharedTty = "/dev/pts/77";
+
+    // Register "old" MCP server on a TTY
+    const res1 = await post("/register", {
+      pid: brokerProc.pid,
+      cwd: "/tmp/test-zombie",
+      git_root: null,
+      tty: sharedTty,
+      session_name: "OldSession",
+      summary: "old work",
+    });
+    const id1 = ((await res1.json()) as { id: string }).id;
+
+    // "New" MCP server registers on the SAME TTY but with a DIFFERENT PID
+    // This simulates a session restart — new process, same terminal
+    const res2 = await post("/register", {
+      pid: process.pid, // Different PID
+      cwd: "/tmp/test-zombie",
+      git_root: null,
+      tty: sharedTty,
+      session_name: "",
+      summary: "",
+    });
+    const id2 = ((await res2.json()) as { id: string }).id;
+
+    expect(id2).not.toBe(id1);
+
+    // Old peer should be evicted — only the new one should exist on this TTY
+    const listRes = await post("/list-peers", { scope: "machine" });
+    const peers = (await listRes.json()) as Array<{ id: string; tty: string }>;
+    const ttyPeers = peers.filter(p => p.tty === sharedTty);
+    expect(ttyPeers.length).toBe(1);
+    expect(ttyPeers[0].id).toBe(id2);
+  });
+
+  test("messages to evicted peer are not deliverable", async () => {
+    const tty = "/dev/pts/88";
+
+    // Register and then evict by re-registering on same TTY
+    const res1 = await post("/register", {
+      pid: brokerProc.pid, cwd: "/tmp/test", git_root: null, tty, session_name: "", summary: "",
+    });
+    const oldId = ((await res1.json()) as { id: string }).id;
+
+    const res2 = await post("/register", {
+      pid: process.pid, cwd: "/tmp/test", git_root: null, tty, session_name: "", summary: "",
+    });
+    const newId = ((await res2.json()) as { id: string }).id;
+
+    // Sending to the old ID should fail
+    const sendRes = await post("/send-message", {
+      from_id: newId, to_id: oldId, text: "hello ghost",
+    });
+    expect(sendRes.status).toBeGreaterThanOrEqual(400);
+  });
+});

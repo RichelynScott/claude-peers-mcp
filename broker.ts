@@ -271,14 +271,30 @@ function handleRegister(body: RegisterRequest): RegisterResponse {
   const id = generateId();
   const now = new Date().toISOString();
 
-  // Preserve session_name and summary from previous registration on re-register
+  // Evict stale peers on re-register: check both PID and TTY.
+  // When a Claude session restarts, it spawns a NEW MCP server with a new PID,
+  // but the OLD MCP server may still be alive (zombie). Evicting by TTY ensures
+  // only one peer per terminal, preventing message theft by zombie processes.
   let sessionName = body.session_name ?? "";
   let summary = body.summary ?? "";
-  const existing = db.query("SELECT id, session_name, summary FROM peers WHERE pid = ?").get(body.pid) as { id: string; session_name: string; summary: string } | null;
-  if (existing) {
-    if (!sessionName && existing.session_name) sessionName = existing.session_name;
-    if (!summary && existing.summary) summary = existing.summary;
-    deletePeer.run(existing.id);
+
+  // Evict by PID (same process re-registering)
+  const existingByPid = db.query("SELECT id, session_name, summary FROM peers WHERE pid = ?").get(body.pid) as { id: string; session_name: string; summary: string } | null;
+  if (existingByPid) {
+    if (!sessionName && existingByPid.session_name) sessionName = existingByPid.session_name;
+    if (!summary && existingByPid.summary) summary = existingByPid.summary;
+    deletePeer.run(existingByPid.id);
+  }
+
+  // Evict by TTY (new process on same terminal — session was restarted)
+  if (body.tty) {
+    const existingByTty = db.query("SELECT id, session_name, summary FROM peers WHERE tty = ? AND pid != ?").all(body.tty, body.pid) as Array<{ id: string; session_name: string; summary: string }>;
+    for (const stale of existingByTty) {
+      if (!sessionName && stale.session_name) sessionName = stale.session_name;
+      if (!summary && stale.summary) summary = stale.summary;
+      brokerLog(`Evicting stale peer ${stale.id} (same TTY ${body.tty}, replaced by PID ${body.pid})`);
+      deletePeer.run(stale.id);
+    }
   }
 
   insertPeer.run(id, body.pid, body.cwd, body.git_root, body.tty, sessionName, summary, now, now);
