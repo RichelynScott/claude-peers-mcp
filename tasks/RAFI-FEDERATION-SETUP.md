@@ -32,7 +32,7 @@ source ~/.zshrc
 ## Step 4: Restart broker
 ```bash
 cd ~/MCPs/claude-peers-mcp
-bun cli.ts kill-broker
+bun src/cli.ts kill-broker
 ```
 Next Claude session auto-restarts it with federation. Look for in MCP logs:
 `[CPM-federation] Listening on 0.0.0.0:7900 (TLS)`
@@ -49,11 +49,11 @@ Run `ifconfig | grep "inet " | grep -v 127.0.0.1` to find your LAN IP.
 Then Riche runs from his machine:
 ```bash
 cd ~/MCPs/claude-peers-mcp
-bun cli.ts federation connect <your-mac-ip>:7900
+bun src/cli.ts federation connect <your-mac-ip>:7900
 ```
 
 ## Verify
 Both machines:
-- `bun cli.ts federation status` — shows connection
+- `bun src/cli.ts federation status` — shows connection
 - In any Claude session: `list_peers(scope="lan")` — shows cross-machine peers
 - `send_message` to a remote peer ID (format: `hostname:peer_id`)
