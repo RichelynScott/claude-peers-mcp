@@ -655,7 +655,10 @@ async function pollAndPushMessages() {
         // Non-critical, proceed without sender info
       }
 
-      // Push as channel notification — this is what makes it immediate
+      // Push as channel notification — this is what makes it immediate.
+      // IMPORTANT: Claude Code silently drops notifications with null meta values.
+      // Use conditional spread to OMIT optional fields rather than passing null.
+      // Also message_id is required for Claude Code to render the notification.
       await mcp.notification({
         method: "notifications/claude/channel",
         params: {
@@ -665,10 +668,11 @@ async function pollAndPushMessages() {
             from_name: fromName,
             from_summary: fromSummary,
             from_cwd: fromCwd,
-            sent_at: msg.sent_at,
-            type: msg.type ?? "text",
-            metadata: msg.metadata ?? null,
-            reply_to: msg.reply_to ?? null,
+            type: msg.type || "text",
+            message_id: String(msg.id),
+            ...(msg.sent_at ? { sent_at: msg.sent_at } : {}),
+            ...(msg.metadata ? { metadata: msg.metadata } : {}),
+            ...(msg.reply_to ? { reply_to: String(msg.reply_to) } : {}),
           },
         },
       });
