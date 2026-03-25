@@ -716,9 +716,63 @@ async function pollAndPushMessages() {
   }
 }
 
+// --- Stale process detection ---
+
+/**
+ * Kill stale MCP server processes that are running from a different path.
+ * This handles the case where the MCP config path changed (e.g., repo restructure)
+ * but old processes are still alive from the old path.
+ */
+async function killStaleMcpServers(): Promise<void> {
+  const myPid = process.pid;
+  // Resolve our own server.ts path for comparison
+  const myServerPath = new URL(import.meta.url).pathname;
+
+  try {
+    // Find all bun processes running server.ts
+    const proc = Bun.spawn(["pgrep", "-f", "bun.*server\\.ts"], {
+      stdout: "pipe",
+      stderr: "ignore",
+    });
+    const output = await new Response(proc.stdout).text();
+    await proc.exited;
+    const pids = output
+      .trim()
+      .split("\n")
+      .filter((p) => p.length > 0)
+      .map(Number)
+      .filter((p) => !isNaN(p));
+
+    for (const pid of pids) {
+      if (pid === myPid) continue; // Don't kill ourselves
+
+      try {
+        // Read the process's command line to check its path
+        const cmdline = await Bun.file(`/proc/${pid}/cmdline`).text();
+        // cmdline is null-separated
+        const args = cmdline.split("\0");
+
+        // Check if this process is running a DIFFERENT server.ts path
+        const serverArg = args.find((a) => a.includes("server.ts"));
+        if (serverArg && !myServerPath.includes(serverArg) && !serverArg.includes(myServerPath)) {
+          log(`Killing stale MCP server PID ${pid} (running from old path: ${serverArg})`);
+          process.kill(pid, "SIGTERM");
+        }
+      } catch {
+        // Process may have already exited, ignore
+      }
+    }
+  } catch {
+    // pgrep not available or failed, non-fatal
+  }
+}
+
 // --- Startup ---
 
 async function main() {
+  // 0. Kill stale MCP servers from old paths before anything else
+  await killStaleMcpServers();
+
   // 1. Ensure broker is running
   await ensureBroker();
 

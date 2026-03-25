@@ -12,6 +12,7 @@
  *   bun cli.ts set-name <id> <name>      — Set a peer's session name
  *   bun cli.ts auto-summary <id>         — Generate and set a deterministic summary
  *   bun cli.ts rotate-token               — Rotate the auth token
+ *   bun cli.ts restart                   — Kill ALL claude-peers processes (broker + servers)
  *   bun cli.ts kill-broker               — Stop the broker daemon
  *   bun cli.ts federation connect <host>:<port>  — Connect to a remote broker
  *   bun cli.ts federation disconnect <host>:<port> — Disconnect from a remote broker
@@ -441,6 +442,33 @@ if (Bun.main === import.meta.path) {
       break;
     }
 
+    case "restart": {
+      console.log("Killing all claude-peers processes (broker + MCP servers)...");
+
+      // Kill all MCP server processes (bun running server.ts)
+      Bun.spawnSync(["pkill", "-f", "bun.*server\\.ts"]);
+
+      // Kill broker via port lookup
+      try {
+        const proc = Bun.spawnSync(["lsof", "-ti", `:${BROKER_PORT}`]);
+        const pids = new TextDecoder()
+          .decode(proc.stdout)
+          .trim()
+          .split("\n")
+          .filter((p) => p);
+        for (const pid of pids) {
+          try { process.kill(parseInt(pid), "SIGTERM"); } catch {}
+        }
+      } catch {}
+
+      // Force kill any remaining broker processes
+      Bun.spawnSync(["pkill", "-f", "bun.*broker\\.ts"]);
+
+      console.log("All claude-peers processes killed.");
+      console.log("Run /mcp in each Claude Code session to reconnect.");
+      break;
+    }
+
     case "kill-broker": {
       try {
         const health = await brokerFetch<{ status: string; peers: number }>("/health");
@@ -599,6 +627,7 @@ Usage:
   bun cli.ts set-name <id> <name>                  Set a peer's session name
   bun cli.ts auto-summary <id>                     Generate and set a deterministic summary
   bun cli.ts rotate-token                          Rotate the auth token
+  bun cli.ts restart                               Kill ALL claude-peers processes (broker + servers)
   bun cli.ts kill-broker                           Stop the broker daemon
 
 Federation:
