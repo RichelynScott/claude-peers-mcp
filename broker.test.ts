@@ -233,7 +233,7 @@ describe("Registration", () => {
     const peers = (await res.json()) as Array<{ id: string; pid: number }>;
     const matchingPids = peers.filter((p) => p.pid === brokerProc.pid);
     expect(matchingPids.length).toBe(1);
-    expect(matchingPids[0].id).toBe(id2);
+    expect(matchingPids[0]!.id).toBe(id2);
   });
 });
 

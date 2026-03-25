@@ -433,9 +433,9 @@ describe("check_messages", () => {
         arguments: {},
       });
       text = resultText(result);
-      if (text.includes("new message")) break;
+      if (text.includes("new message(s):")) break;
     }
-    expect(text).toContain("new message");
+    expect(text).toContain("new message(s):");
     expect(text).toContain("Hello server, this is a test!");
   }, 15_000);
 
