@@ -1,0 +1,52 @@
+/**
+ * Persistent config file support for claude-peers.
+ *
+ * Reads ~/.claude-peers-config.json on startup. Env vars override config
+ * file values for backwards compatibility.
+ *
+ * Config file format:
+ * {
+ *   "federation": {
+ *     "enabled": true,
+ *     "port": 7900,
+ *     "subnet": "0.0.0.0/0"
+ *   }
+ * }
+ */
+import * as fs from "node:fs";
+import { homedir } from "node:os";
+
+export const CONFIG_PATH = `${homedir()}/.claude-peers-config.json`;
+
+export interface PeersConfig {
+  federation?: {
+    enabled?: boolean;
+    port?: number;
+    subnet?: string;
+  };
+}
+
+/**
+ * Load config from ~/.claude-peers-config.json.
+ * Returns empty object if file doesn't exist or is invalid JSON.
+ * Never throws — missing/malformed config is silently ignored.
+ */
+export function loadConfig(): PeersConfig {
+  try {
+    if (!fs.existsSync(CONFIG_PATH)) return {};
+    const content = fs.readFileSync(CONFIG_PATH, "utf-8");
+    return JSON.parse(content) as PeersConfig;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Write config to ~/.claude-peers-config.json.
+ * Creates the file with 0644 permissions.
+ */
+export function writeConfig(config: PeersConfig): void {
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + "\n", {
+    mode: 0o644,
+  });
+}

@@ -46,15 +46,25 @@ import {
   ipInSubnet,
   federationFetch,
 } from "./federation.ts";
+import { loadConfig } from "./shared/config.ts";
 
 const PORT = parseInt(process.env.CLAUDE_PEERS_PORT ?? "7899", 10);
 const DB_PATH = process.env.CLAUDE_PEERS_DB ?? `${process.env.HOME}/.claude-peers.db`;
 const LOG_DIR = new URL("../cpm-logs", import.meta.url).pathname;
 const TOKEN_PATH = process.env.CLAUDE_PEERS_TOKEN ?? `${process.env.HOME}/.claude-peers-token`;
 
+// --- Persistent config file (env vars override config file values) ---
+const persistentConfig = loadConfig();
+
 // --- Federation configuration (US-003) ---
-const FEDERATION_ENABLED = process.env.CLAUDE_PEERS_FEDERATION_ENABLED === "true" || process.env.CLAUDE_PEERS_FEDERATION_ENABLED === "1";
-const FEDERATION_PORT = parseInt(process.env.CLAUDE_PEERS_FEDERATION_PORT ?? "7900", 10);
+const FEDERATION_ENABLED =
+  process.env.CLAUDE_PEERS_FEDERATION_ENABLED === "true" ||
+  process.env.CLAUDE_PEERS_FEDERATION_ENABLED === "1" ||
+  persistentConfig.federation?.enabled === true;
+const FEDERATION_PORT =
+  parseInt(process.env.CLAUDE_PEERS_FEDERATION_PORT || "") ||
+  persistentConfig.federation?.port ||
+  7900;
 const FEDERATION_SYNC_INTERVAL_MS = 30_000;
 const FEDERATION_STALE_TIMEOUT_MS = 90_000;
 
@@ -1033,11 +1043,14 @@ if (FEDERATION_ENABLED) {
       // Resolve hostname
       federationHostname = getMachineHostname();
 
-      // US-004: Detect or use configured subnet
-      const configuredSubnet = process.env.CLAUDE_PEERS_FEDERATION_SUBNET;
+      // US-004: Detect or use configured subnet (env var > config file > auto-detect)
+      const configuredSubnet =
+        process.env.CLAUDE_PEERS_FEDERATION_SUBNET ||
+        persistentConfig.federation?.subnet;
       if (configuredSubnet) {
         federationSubnet = configuredSubnet;
-        federationLog(`Subnet restriction (configured): ${federationSubnet}`);
+        const source = process.env.CLAUDE_PEERS_FEDERATION_SUBNET ? "env var" : "config file";
+        federationLog(`Subnet restriction (${source}): ${federationSubnet}`);
       } else {
         federationSubnet = await detectSubnet();
         federationLog(`Subnet restriction (auto-detected): ${federationSubnet}`);

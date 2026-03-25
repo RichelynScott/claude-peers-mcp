@@ -34,6 +34,7 @@ import {
   getRecentFiles,
 } from "./shared/summarize.ts";
 import { TOKEN_PATH, readTokenSync } from "./shared/token.ts";
+import { loadConfig } from "./shared/config.ts";
 
 // --- Configuration ---
 
@@ -103,8 +104,24 @@ async function ensureBroker(): Promise<void> {
   }
 
   log("Starting broker daemon...");
+
+  // Read persistent config so the spawned broker inherits federation settings
+  // even when the MCP server's shell doesn't have the env vars set
+  const config = loadConfig();
+  const brokerEnv: Record<string, string> = { ...process.env } as Record<string, string>;
+  if (config.federation?.enabled && !brokerEnv.CLAUDE_PEERS_FEDERATION_ENABLED) {
+    brokerEnv.CLAUDE_PEERS_FEDERATION_ENABLED = "true";
+  }
+  if (config.federation?.port && !brokerEnv.CLAUDE_PEERS_FEDERATION_PORT) {
+    brokerEnv.CLAUDE_PEERS_FEDERATION_PORT = String(config.federation.port);
+  }
+  if (config.federation?.subnet && !brokerEnv.CLAUDE_PEERS_FEDERATION_SUBNET) {
+    brokerEnv.CLAUDE_PEERS_FEDERATION_SUBNET = config.federation.subnet;
+  }
+
   const proc = Bun.spawn(["bun", BROKER_SCRIPT], {
     stdio: ["ignore", "ignore", "inherit"],
+    env: brokerEnv,
     // Detach so the broker survives if this MCP server exits
     // On macOS/Linux, the broker will keep running
   });

@@ -23,6 +23,7 @@
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { TOKEN_PATH, readTokenSync } from "./shared/token.ts";
+import { loadConfig, writeConfig, CONFIG_PATH } from "./shared/config.ts";
 import type { BroadcastResponse, FederationStatusResponse } from "./shared/types.ts";
 
 const BROKER_PORT = parseInt(process.env.CLAUDE_PEERS_PORT ?? "7899", 10);
@@ -244,13 +245,18 @@ async function federationSetup(): Promise<void> {
   }
 
   // --- Step 2: Federation enabled? ---
-  const fedEnabled = process.env.CLAUDE_PEERS_FEDERATION_ENABLED === "true";
+  const config = loadConfig();
+  const fedEnabled =
+    process.env.CLAUDE_PEERS_FEDERATION_ENABLED === "true" ||
+    config.federation?.enabled === true;
   if (fedEnabled) {
-    console.log("  2. ✓ Federation enabled (CLAUDE_PEERS_FEDERATION_ENABLED=true)");
+    const source = process.env.CLAUDE_PEERS_FEDERATION_ENABLED === "true" ? "env var" : "config file";
+    console.log(`  2. ✓ Federation enabled (${source})`);
   } else {
     console.log("  2. ✗ Federation not enabled");
     console.log("     Set CLAUDE_PEERS_FEDERATION_ENABLED=true in your environment");
-    console.log("     (e.g., add to ~/.zshrc and restart the broker)");
+    console.log(`     or run this command to enable persistently:`);
+    console.log(`     bun src/cli.ts federation enable`);
     console.log("");
     return;
   }
@@ -296,7 +302,21 @@ async function federationSetup(): Promise<void> {
   console.log(`Both machines must share the same token for authentication.`);
   console.log(`Copy your token to the remote machine:`);
   console.log(`  scp ~/.claude-peers-token user@<remote-ip>:~/.claude-peers-token`);
-  console.log(`\nOr manually: the token is a single line in ~/.claude-peers-token\n`);
+  console.log(`\nOr manually: the token is a single line in ~/.claude-peers-token`);
+
+  // --- Save config file so federation survives broker restarts ---
+  const existingConfig = loadConfig();
+  const newConfig = {
+    ...existingConfig,
+    federation: {
+      enabled: true,
+      port: FEDERATION_PORT,
+      subnet: process.env.CLAUDE_PEERS_FEDERATION_SUBNET || existingConfig.federation?.subnet || "0.0.0.0/0",
+    },
+  };
+  writeConfig(newConfig);
+  console.log(`\n✓ Config saved to ${CONFIG_PATH}`);
+  console.log("  Federation will auto-enable on broker restart (no env vars needed).\n");
 }
 
 async function federationSetupWSL2(fedPort: number): Promise<void> {
@@ -840,10 +860,43 @@ if (Bun.main === import.meta.path) {
           break;
         }
 
+        case "enable": {
+          const existingConfig = loadConfig();
+          const port = parseInt(process.argv[4] || "") || existingConfig.federation?.port || 7900;
+          const subnet = process.argv[5] || existingConfig.federation?.subnet || "0.0.0.0/0";
+          const newConfig = {
+            ...existingConfig,
+            federation: { enabled: true, port, subnet },
+          };
+          writeConfig(newConfig);
+          console.log(`Federation enabled in config file.`);
+          console.log(`  Config: ${CONFIG_PATH}`);
+          console.log(`  Port: ${port}`);
+          console.log(`  Subnet: ${subnet}`);
+          console.log(`\nRestart the broker to apply: bun src/cli.ts kill-broker`);
+          break;
+        }
+
+        case "disable": {
+          const existingConfig = loadConfig();
+          const newConfig = {
+            ...existingConfig,
+            federation: {
+              ...existingConfig.federation,
+              enabled: false,
+            },
+          };
+          writeConfig(newConfig);
+          console.log(`Federation disabled in config file.`);
+          console.log(`  Config: ${CONFIG_PATH}`);
+          console.log(`\nRestart the broker to apply: bun src/cli.ts kill-broker`);
+          break;
+        }
+
         default:
           console.error(`Unknown federation subcommand: ${subCmd ?? "(none)"}`);
           console.error(
-            "Usage: bun cli.ts federation <connect|disconnect|setup|status> [args]"
+            "Usage: bun cli.ts federation <connect|disconnect|setup|status|enable|disable> [args]"
           );
           process.exit(1);
       }
@@ -868,6 +921,8 @@ Federation:
   bun cli.ts federation connect <host>:<port>      Connect to a remote broker
   bun cli.ts federation disconnect <host>:<port>   Disconnect from a remote broker
   bun cli.ts federation status                     Show federation status
-  bun cli.ts federation setup                      Guided federation setup (WSL2/macOS port forwarding)`);
+  bun cli.ts federation setup                      Guided federation setup (WSL2/macOS port forwarding)
+  bun cli.ts federation enable [port] [subnet]     Enable federation in config file
+  bun cli.ts federation disable                    Disable federation in config file`);
   }
 }
