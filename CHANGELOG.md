@@ -21,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - 21 federation-specific tests bringing total to 100 tests, 302 assertions
 
 ### Fixed
+- WSL2 subnet auto-detection defaults to allow-all (172.x.x.x NAT range is not the LAN)
 - Auto-detection and cleanup of stale MCP server processes on startup
 - New CLI `restart` command kills broker + all MCP servers for clean reconnect
 - Channel notification payload format — null values silently dropped by Claude Code, now omitted cleanly (`eb4c72b`)

@@ -163,6 +163,36 @@ curl -s -X POST http://127.0.0.1:7899/unregister \
   -d '{"id": "STALE_PEER_ID"}'
 ```
 
+### Federation Connect Fails: "Connection rejected: outside allowed subnet"
+
+**Symptoms**: `bun src/cli.ts federation connect <ip>:7900` returns connection rejected or handshake failed.
+
+**Most likely cause on WSL2**: The auto-detected subnet is the WSL2 internal NAT range (172.x.x.x), not your actual LAN subnet.
+
+**Fix**: Manually set the subnet to match your LAN:
+```bash
+export CLAUDE_PEERS_FEDERATION_SUBNET=192.168.0.0/16  # Adjust for your LAN
+```
+Add this to your `~/.zshrc` and restart the broker.
+
+**Fix for macOS/native Linux**: Auto-detection should work correctly. If not, set the env var manually.
+
+### Federation Connect Fails: "Handshake failed" or Connection Refused
+
+**Symptoms**: `bun src/cli.ts federation connect <ip>:7900` fails with handshake error or connection refused.
+
+**Check on the REMOTE machine**:
+1. Is the broker running? `bun src/cli.ts status`
+2. Is federation enabled? Check `tail cpm-logs/federation.log` for `Listening on 0.0.0.0:7900 (TLS)`
+3. If not: `CLAUDE_PEERS_FEDERATION_ENABLED=true bun src/broker.ts`
+4. macOS: Accept the firewall prompt for port 7900, or run:
+   `sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add $(which bun) --unblockapp $(which bun)`
+
+**Check from YOUR machine**:
+1. Can you reach the remote? `ping <ip>`
+2. Can you reach the port? `curl -sk https://<ip>:7900/health` (should return JSON or TLS error, not connection refused)
+3. Is your subnet configured correctly? Check `cpm-logs/federation.log` for the subnet line
+
 ---
 
 ## After Code Changes — Restart Checklist

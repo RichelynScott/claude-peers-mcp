@@ -118,21 +118,46 @@ export function ipInSubnet(ip: string, cidr: string): boolean {
 }
 
 /**
+ * Detect if running inside WSL2.
+ * Checks for WSLInterop binfmt entry or WSL_DISTRO_NAME env var.
+ */
+function isWSL2(): boolean {
+  if (process.env.WSL_DISTRO_NAME) return true;
+  try {
+    return existsSync("/proc/sys/fs/binfmt_misc/WSLInterop");
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Auto-detect the local subnet from default route.
- * Uses `ip route show default` (works correctly on WSL2, unlike os.networkInterfaces()).
- * Falls back to /24 of first non-internal IPv4 interface.
+ *
+ * On WSL2, the default route returns the internal NAT range (172.x.x.x/20),
+ * NOT the actual LAN subnet. Since WSL2's network topology makes subnet
+ * restriction unreliable, we default to 0.0.0.0/0 (allow all) on WSL2
+ * and rely on PSK auth + TLS for security instead.
+ *
+ * Falls back to /24 of first non-internal IPv4 interface on native Linux.
+ * Manual override: set CLAUDE_PEERS_FEDERATION_SUBNET env var.
  */
 export async function detectSubnet(): Promise<string> {
+  // WSL2: subnet auto-detection is fundamentally broken (NAT range != LAN range)
+  if (isWSL2()) {
+    federationLog("WSL2 detected — subnet auto-detection unreliable (NAT range != LAN). Defaulting to 0.0.0.0/0 (allow all). Set CLAUDE_PEERS_FEDERATION_SUBNET to restrict.");
+    return "0.0.0.0/0";
+  }
+
   try {
     // Primary: ip route show default → get gateway interface → get that interface's IP
     const routeProc = Bun.spawn(["ip", "route", "show", "default"], { stdout: "pipe", stderr: "ignore" });
     const routeText = await new Response(routeProc.stdout).text();
-    // Example: "default via 172.30.240.1 dev eth0"
+    // Example: "default via 192.168.4.1 dev eth0"
     const devMatch = routeText.match(/dev\s+(\S+)/);
     if (devMatch) {
       const ifaceProc = Bun.spawn(["ip", "-4", "addr", "show", devMatch[1]], { stdout: "pipe", stderr: "ignore" });
       const ifaceText = await new Response(ifaceProc.stdout).text();
-      // Example: "inet 172.30.249.174/20 ..."
+      // Example: "inet 192.168.4.10/24 ..."
       const inetMatch = ifaceText.match(/inet\s+(\d+\.\d+\.\d+\.\d+)\/(\d+)/);
       if (inetMatch) {
         const ip = inetMatch[1];
@@ -141,7 +166,9 @@ export async function detectSubnet(): Promise<string> {
         const mask = prefix === 0 ? 0 : (~0 << (32 - prefix)) >>> 0;
         const network = (ipToInt(ip) & mask) >>> 0;
         const networkIp = [(network >>> 24) & 255, (network >>> 16) & 255, (network >>> 8) & 255, network & 255].join(".");
-        return `${networkIp}/${prefix}`;
+        const subnet = `${networkIp}/${prefix}`;
+        federationLog(`Auto-detected subnet: ${subnet} (from default route, interface ${devMatch[1]})`);
+        return subnet;
       }
     }
   } catch {}
@@ -152,10 +179,13 @@ export async function detectSubnet(): Promise<string> {
   for (const addrs of Object.values(ifaces)) {
     for (const addr of addrs || []) {
       if (addr.family === "IPv4" && !addr.internal && !addr.address.startsWith("172.") && !addr.address.startsWith("100.")) {
-        return `${addr.address}/24`;
+        const subnet = `${addr.address}/24`;
+        federationLog(`Auto-detected subnet: ${subnet} (from networkInterfaces fallback)`);
+        return subnet;
       }
     }
   }
+  federationLog("Subnet auto-detection failed — defaulting to 0.0.0.0/0 (allow all)");
   return "0.0.0.0/0"; // Allow all if detection fails
 }
 
