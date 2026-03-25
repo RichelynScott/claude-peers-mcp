@@ -1,6 +1,6 @@
 # claude-peers-mcp
 
-Peer discovery and messaging for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) instances -- on the same machine or across your LAN.
+Peer discovery and messaging for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) instances -- on the same machine or across your LAN to other machines on secured LAN.
 
 Multiple Claude Code sessions can find each other, exchange messages in real time, and coordinate work without any external services. Federation extends this across machines with TLS encryption and pre-shared key authentication.
 
