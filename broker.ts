@@ -28,12 +28,35 @@ import type {
   Peer,
   Message,
   MessageType,
+  RemoteMachine,
+  RemotePeer,
+  FederationHandshakeRequest,
+  FederationRelayRequest,
+  FederationPeersResponse,
+  FederationConnectRequest,
+  FederationStatusResponse,
 } from "./shared/types.ts";
+import {
+  ensureTlsCert,
+  getMachineHostname,
+  detectSubnet,
+  federationLog,
+  signMessage,
+  verifySignature,
+  ipInSubnet,
+  federationFetch,
+} from "./federation.ts";
 
 const PORT = parseInt(process.env.CLAUDE_PEERS_PORT ?? "7899", 10);
 const DB_PATH = process.env.CLAUDE_PEERS_DB ?? `${process.env.HOME}/.claude-peers.db`;
 const LOG_DIR = new URL("./cpm-logs", import.meta.url).pathname;
 const TOKEN_PATH = process.env.CLAUDE_PEERS_TOKEN ?? `${process.env.HOME}/.claude-peers-token`;
+
+// --- Federation configuration (US-003) ---
+const FEDERATION_ENABLED = process.env.CLAUDE_PEERS_FEDERATION_ENABLED === "true" || process.env.CLAUDE_PEERS_FEDERATION_ENABLED === "1";
+const FEDERATION_PORT = parseInt(process.env.CLAUDE_PEERS_FEDERATION_PORT ?? "7900", 10);
+const FEDERATION_SYNC_INTERVAL_MS = 30_000;
+const FEDERATION_STALE_TIMEOUT_MS = 90_000;
 
 // Ensure log directory exists
 try { require("fs").mkdirSync(LOG_DIR, { recursive: true }); } catch {}
@@ -292,6 +315,10 @@ function handleListPeers(body: ListPeersRequest): Peer[] {
         peers = selectPeersByDirectory.all(body.cwd) as Peer[];
       }
       break;
+    case "lan":
+      // LAN scope: local machine peers + all remote peers from federation
+      peers = selectAllPeers.all() as Peer[];
+      break;
     default:
       peers = selectAllPeers.all() as Peer[];
   }
@@ -302,7 +329,7 @@ function handleListPeers(body: ListPeersRequest): Peer[] {
   }
 
   // Verify each peer's process is still alive
-  return peers.filter((p) => {
+  peers = peers.filter((p) => {
     try {
       process.kill(p.pid, 0);
       return true;
@@ -312,6 +339,31 @@ function handleListPeers(body: ListPeersRequest): Peer[] {
       return false;
     }
   });
+
+  // For "lan" scope, merge remote peers from federation (US-006)
+  if (body.scope === "lan" && FEDERATION_ENABLED) {
+    for (const remote of remoteMachines.values()) {
+      for (const rp of remote.peers) {
+        // Convert RemotePeer to Peer shape for the response
+        // Remote peer IDs are already prefixed with hostname (e.g., "rafi-mac:a1b2c3d4")
+        const asPeer: Peer = {
+          id: rp.id,
+          pid: 0,             // Remote — no local PID
+          cwd: rp.cwd,
+          git_root: rp.git_root,
+          tty: null,
+          session_name: rp.session_name,
+          summary: rp.summary,
+          registered_at: rp.last_seen,
+          last_seen: rp.last_seen,
+        };
+        if (body.exclude_id && asPeer.id === body.exclude_id) continue;
+        peers.push(asPeer);
+      }
+    }
+  }
+
+  return peers;
 }
 
 const VALID_MESSAGE_TYPES = new Set<string>(["text", "query", "response", "handoff", "broadcast"]);
@@ -368,7 +420,7 @@ function handleSendMessage(body: SendMessageRequest): { ok: boolean; error?: str
   return { ok: true, message_id: Number(result.lastInsertRowid) };
 }
 
-function handleBroadcast(body: BroadcastRequest): BroadcastResponse {
+async function handleBroadcast(body: BroadcastRequest): Promise<BroadcastResponse> {
   // Validate type if provided
   const type: MessageType = (body.type ?? "broadcast") as MessageType;
   if (!VALID_MESSAGE_TYPES.has(type)) {
@@ -405,20 +457,50 @@ function handleBroadcast(body: BroadcastRequest): BroadcastResponse {
   const now = new Date().toISOString();
   const messageIds: number[] = [];
 
-  // Atomic: all messages inserted in one transaction
-  const insertAll = db.transaction(() => {
-    for (const peer of peers) {
-      const result = insertMessage.run(
-        body.from_id, peer.id, body.text, type,
-        metadataStr, null, now
-      );
-      messageIds.push(Number(result.lastInsertRowid));
-    }
-  });
-  insertAll();
+  // Separate local peers (have real PIDs) from remote peers (pid === 0, ID contains ":")
+  const localPeers = peers.filter((p) => !p.id.includes(":"));
+  const remotePeers = peers.filter((p) => p.id.includes(":"));
 
-  brokerLog(`broadcast from ${body.from_id} to ${peers.length} peer(s) in scope ${body.scope}`);
-  return { ok: true, recipients: peers.length, message_ids: messageIds };
+  // Insert messages for local peers atomically
+  if (localPeers.length > 0) {
+    const insertAll = db.transaction(() => {
+      for (const peer of localPeers) {
+        const result = insertMessage.run(
+          body.from_id, peer.id, body.text, type,
+          metadataStr, null, now
+        );
+        messageIds.push(Number(result.lastInsertRowid));
+      }
+    });
+    insertAll();
+  }
+
+  // Relay broadcast to remote peers via federation (FR-11: LAN broadcast)
+  if (remotePeers.length > 0 && FEDERATION_ENABLED) {
+    const relayPromises = remotePeers.map(async (peer) => {
+      try {
+        const result = await handleFederationSendToRemote({
+          to_id: peer.id,
+          from_id: body.from_id,
+          text: body.text,
+          type,
+          metadata: body.metadata as Record<string, unknown> | undefined,
+        });
+        if (result.ok) {
+          messageIds.push(-1); // Remote — no local message ID
+        } else {
+          brokerLog(`broadcast relay to ${peer.id} failed: ${result.error}`);
+        }
+      } catch (err) {
+        brokerLog(`broadcast relay to ${peer.id} error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    });
+    await Promise.allSettled(relayPromises);
+  }
+
+  const totalRecipients = localPeers.length + remotePeers.length;
+  brokerLog(`broadcast from ${body.from_id} to ${totalRecipients} peer(s) in scope ${body.scope} (${localPeers.length} local, ${remotePeers.length} remote)`);
+  return { ok: true, recipients: totalRecipients, message_ids: messageIds };
 }
 
 function handlePollMessages(body: PollMessagesRequest): PollMessagesResponse {
@@ -457,6 +539,14 @@ setInterval(() => {
     if (now >= limit.resetAt) rateLimits.delete(ip);
   }
 }, 60_000);
+
+// --- Federation state (US-003) ---
+// In-memory map of connected remote machines and their peers
+const remoteMachines = new Map<string, RemoteMachine>();
+
+// Resolved federation subnet (set during startup if federation enabled)
+let federationSubnet = "0.0.0.0/0";
+let federationHostname = "";
 
 // --- HTTP Server ---
 
@@ -507,6 +597,11 @@ Bun.serve({
       }
     }
 
+    // GET /federation/status — returns federation state (auth still required via query param or no auth for GET)
+    if (req.method === "GET" && path === "/federation/status") {
+      return Response.json(handleFederationStatus());
+    }
+
     if (req.method !== "POST") {
       return new Response("claude-peers broker", { status: 200 });
     }
@@ -531,7 +626,7 @@ Bun.serve({
         case "/send-message":
           return Response.json(handleSendMessage(body as SendMessageRequest));
         case "/broadcast":
-          return Response.json(handleBroadcast(body as BroadcastRequest));
+          return Response.json(await handleBroadcast(body as BroadcastRequest));
         case "/poll-messages":
           return Response.json(handlePollMessages(body as PollMessagesRequest));
         case "/ack-messages":
@@ -540,6 +635,20 @@ Bun.serve({
         case "/unregister":
           handleUnregister(body as { id: string });
           return Response.json({ ok: true });
+
+        // --- Federation local-facing endpoints (US-006) ---
+        case "/federation/status":
+          return Response.json(handleFederationStatus());
+        case "/federation/connect":
+          return Response.json(await handleFederationConnect(body as FederationConnectRequest));
+        case "/federation/disconnect":
+          return Response.json(handleFederationDisconnect(body as { host: string; port: number }));
+        case "/federation/send-to-remote":
+          return Response.json(await handleFederationSendToRemote(body as {
+            to_id: string; from_id: string; text: string;
+            type?: string; metadata?: Record<string, unknown>; reply_to?: number;
+          }));
+
         default:
           return Response.json({ error: "not found" }, { status: 404 });
       }
@@ -551,3 +660,406 @@ Bun.serve({
 });
 
 brokerLog(`listening on 127.0.0.1:${PORT} (db: ${DB_PATH})`);
+
+// --- Federation local-facing handlers (US-006) ---
+
+function handleFederationStatus(): FederationStatusResponse {
+  if (!FEDERATION_ENABLED) {
+    return {
+      enabled: false,
+      port: FEDERATION_PORT,
+      subnet: "",
+      remotes: [],
+      total_remote_peers: 0,
+    };
+  }
+
+  const remotes: FederationStatusResponse["remotes"] = [];
+  let totalRemotePeers = 0;
+  for (const rm of remoteMachines.values()) {
+    remotes.push({
+      host: rm.host,
+      port: rm.port,
+      hostname: rm.hostname,
+      peer_count: rm.peers.length,
+      connected_at: rm.connected_at,
+      last_sync: rm.last_sync,
+    });
+    totalRemotePeers += rm.peers.length;
+  }
+
+  return {
+    enabled: true,
+    port: FEDERATION_PORT,
+    subnet: federationSubnet,
+    remotes,
+    total_remote_peers: totalRemotePeers,
+  };
+}
+
+async function handleFederationConnect(body: FederationConnectRequest): Promise<{ ok: boolean; hostname?: string; error?: string }> {
+  if (!FEDERATION_ENABLED) {
+    return { ok: false, error: "Federation is not enabled" };
+  }
+
+  const { host, port } = body;
+  const key = `${host}:${port}`;
+
+  // Already connected?
+  if (remoteMachines.has(key)) {
+    return { ok: true, hostname: remoteMachines.get(key)!.hostname };
+  }
+
+  try {
+    // TLS handshake with remote federation agent (curl workaround for self-signed certs)
+    const handshakeResult = await federationFetch<{ hostname: string; version: string; error?: string }>(
+      `https://${host}:${port}/federation/handshake`,
+      {
+        psk: currentToken,
+        hostname: federationHostname,
+        version: "1.0.0",
+      } satisfies FederationHandshakeRequest,
+      currentToken,
+    );
+
+    if (!handshakeResult.ok) {
+      const errMsg = (handshakeResult.data as { error?: string })?.error ?? "unknown";
+      return { ok: false, error: `Handshake failed (${handshakeResult.status}): ${errMsg}` };
+    }
+
+    const result = handshakeResult.data;
+
+    // Fetch initial peer list from remote
+    const peersResult = await federationFetch<FederationPeersResponse>(
+      `https://${host}:${port}/federation/peers`,
+      {},
+      currentToken,
+    );
+
+    let remotePeers: RemotePeer[] = [];
+    if (peersResult.ok) {
+      const peersData = peersResult.data;
+      remotePeers = peersData.peers.map((p: Peer) => ({
+        id: `${result.hostname}:${p.id}`,
+        machine: result.hostname,
+        cwd: p.cwd,
+        git_root: p.git_root,
+        session_name: p.session_name,
+        summary: p.summary,
+        last_seen: p.last_seen,
+      }));
+    }
+
+    const now = new Date().toISOString();
+    remoteMachines.set(key, {
+      host,
+      port,
+      hostname: result.hostname,
+      peers: remotePeers,
+      connected_at: now,
+      last_sync: now,
+    });
+
+    federationLog(`Connected to ${result.hostname} at ${host}:${port} (${remotePeers.length} peers)`);
+    return { ok: true, hostname: result.hostname };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    federationLog(`Failed to connect to ${host}:${port}: ${msg}`);
+    return { ok: false, error: msg };
+  }
+}
+
+function handleFederationDisconnect(body: { host: string; port: number }): { ok: boolean; error?: string } {
+  if (!FEDERATION_ENABLED) {
+    return { ok: false, error: "Federation is not enabled" };
+  }
+
+  const key = `${body.host}:${body.port}`;
+  if (!remoteMachines.has(key)) {
+    return { ok: false, error: `Not connected to ${key}` };
+  }
+
+  const rm = remoteMachines.get(key)!;
+  remoteMachines.delete(key);
+  federationLog(`Disconnected from ${rm.hostname} at ${key}`);
+  return { ok: true };
+}
+
+async function handleFederationSendToRemote(body: {
+  to_id: string; from_id: string; text: string;
+  type?: string; metadata?: Record<string, unknown>; reply_to?: number;
+}): Promise<{ ok: boolean; error?: string }> {
+  if (!FEDERATION_ENABLED) {
+    return { ok: false, error: "Federation is not enabled" };
+  }
+
+  const { to_id, from_id, text, type, metadata, reply_to } = body;
+
+  // to_id should be "hostname:peer_id" — find which remote machine owns it
+  const colonIdx = to_id.indexOf(":");
+  if (colonIdx === -1) {
+    return { ok: false, error: `Invalid remote peer ID "${to_id}" — expected "hostname:peer_id" format` };
+  }
+
+  const targetHostname = to_id.slice(0, colonIdx);
+
+  // Find the remote machine by hostname
+  let targetMachine: RemoteMachine | undefined;
+  for (const rm of remoteMachines.values()) {
+    if (rm.hostname === targetHostname) {
+      targetMachine = rm;
+      break;
+    }
+  }
+
+  if (!targetMachine) {
+    return { ok: false, error: `No federation connection to machine "${targetHostname}"` };
+  }
+
+  // Build relay request with HMAC signature
+  const relayBody: Record<string, unknown> = {
+    from_id: `${federationHostname}:${from_id}`,
+    from_machine: federationHostname,
+    to_id: to_id.slice(colonIdx + 1), // strip hostname prefix for the remote
+    text,
+    type: type ?? "text",
+    metadata: metadata ?? null,
+    reply_to: reply_to ?? null,
+  };
+
+  // Sign the body (excluding the signature field itself)
+  const signature = signMessage(relayBody, currentToken);
+
+  try {
+    // Use curl workaround for self-signed TLS certs
+    const resp = await federationFetch<{ ok?: boolean; error?: string }>(
+      `https://${targetMachine.host}:${targetMachine.port}/federation/relay`,
+      { ...relayBody, signature },
+      currentToken,
+    );
+
+    if (!resp.ok) {
+      const errMsg = resp.data?.error ?? "unknown";
+      return { ok: false, error: `Relay failed (${resp.status}): ${errMsg}` };
+    }
+
+    return { ok: true };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: `Relay to ${targetMachine.hostname} failed: ${msg}` };
+  }
+}
+
+// --- Federation periodic peer sync (US-009) ---
+
+async function syncRemotePeers(): Promise<void> {
+  if (!FEDERATION_ENABLED || remoteMachines.size === 0) return;
+
+  const now = Date.now();
+
+  for (const [key, remote] of remoteMachines) {
+    try {
+      // Use curl workaround for self-signed TLS certs
+      const resp = await federationFetch<FederationPeersResponse>(
+        `https://${remote.host}:${remote.port}/federation/peers`,
+        {},
+        currentToken,
+      );
+
+      if (!resp.ok) {
+        federationLog(`Sync warning: ${remote.hostname} (${key}) returned ${resp.status}`);
+        continue;
+      }
+
+      const data = resp.data;
+      remote.peers = data.peers.map((p: Peer) => ({
+        id: `${remote.hostname}:${p.id}`,
+        machine: remote.hostname,
+        cwd: p.cwd,
+        git_root: p.git_root,
+        session_name: p.session_name,
+        summary: p.summary,
+        last_seen: p.last_seen,
+      }));
+      remote.last_sync = new Date().toISOString();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      federationLog(`Sync warning: failed to reach ${remote.hostname} (${key}): ${msg}`);
+    }
+  }
+
+  // Evict stale remotes whose last_sync exceeds the stale timeout
+  for (const [key, remote] of remoteMachines) {
+    const lastSyncAge = now - new Date(remote.last_sync).getTime();
+    if (lastSyncAge > FEDERATION_STALE_TIMEOUT_MS) {
+      federationLog(`Evicting stale remote ${remote.hostname} (${key}) — last sync ${Math.round(lastSyncAge / 1000)}s ago`);
+      remoteMachines.delete(key);
+    }
+  }
+}
+
+// --- Federation TLS server (US-003, US-004, US-006) ---
+
+async function handleFederationRequest(req: Request, server: any): Promise<Response> {
+  const url = new URL(req.url);
+  const path = url.pathname;
+
+  // US-004: Subnet restriction — use Bun's server.requestIP() for the real socket address.
+  // SECURITY: Never trust X-Forwarded-For — an attacker can inject it to bypass subnet checks.
+  const socketAddr = server.requestIP(req);
+  const remoteIp = socketAddr?.address ?? "0.0.0.0";
+
+  // Strip IPv6-mapped IPv4 prefix if present (e.g., "::ffff:192.168.1.5" -> "192.168.1.5")
+  const cleanIp = remoteIp.startsWith("::ffff:") ? remoteIp.slice(7) : remoteIp;
+
+  if (!ipInSubnet(cleanIp, federationSubnet)) {
+    federationLog(`Rejected connection from ${cleanIp} — outside subnet ${federationSubnet}`);
+    return Response.json(
+      { error: "Connection rejected: outside allowed subnet" },
+      { status: 403 }
+    );
+  }
+
+  // Health check — no auth required
+  if (path === "/health") {
+    return Response.json({ status: "ok", federation: true, hostname: federationHostname });
+  }
+
+  if (req.method !== "POST") {
+    return new Response("claude-peers federation agent", { status: 200 });
+  }
+
+  // PSK validation for all POST federation endpoints
+  const psk = req.headers.get("x-claude-peers-psk");
+  if (!psk || !isValidToken(psk, currentToken)) {
+    federationLog(`PSK mismatch from ${cleanIp}`);
+    return Response.json({ error: "PSK mismatch" }, { status: 403 });
+  }
+
+  try {
+    const body = await req.json();
+
+    switch (path) {
+      case "/federation/handshake": {
+        const hsReq = body as FederationHandshakeRequest;
+        // Validate PSK in body as well (belt-and-suspenders)
+        if (!hsReq.psk || !isValidToken(hsReq.psk, currentToken)) {
+          return Response.json({ error: "PSK mismatch" }, { status: 403 });
+        }
+        federationLog(`Handshake from ${hsReq.hostname} (v${hsReq.version}) at ${cleanIp}`);
+        return Response.json({ hostname: federationHostname, version: "1.0.0" });
+      }
+
+      case "/federation/peers": {
+        // Return all local peers (reuse existing handler)
+        const localPeers = handleListPeers({ scope: "machine", cwd: "", git_root: null });
+        const resp: FederationPeersResponse = {
+          hostname: federationHostname,
+          peers: localPeers,
+        };
+        return Response.json(resp);
+      }
+
+      case "/federation/relay": {
+        const relayReq = body as FederationRelayRequest;
+
+        // Validate HMAC signature — strip signature from body for verification
+        const { signature, ...bodyWithoutSig } = relayReq;
+        if (!signature || !verifySignature(bodyWithoutSig as Record<string, unknown>, signature, currentToken)) {
+          federationLog(`Invalid HMAC signature on relay from ${relayReq.from_machine}`);
+          return Response.json({ error: "Invalid HMAC signature" }, { status: 403 });
+        }
+
+        // Validate target exists locally
+        const target = db.query("SELECT id, pid FROM peers WHERE id = ?").get(relayReq.to_id) as { id: string; pid: number } | null;
+        if (!target) {
+          return Response.json({ ok: false, error: `Peer ${relayReq.to_id} not found locally` }, { status: 404 });
+        }
+
+        // For remote from_ids (containing ":"), bypass PID liveness check
+        // because the sender is on another machine — no local PID to check
+        const isRemoteFrom = relayReq.from_id.includes(":");
+
+        if (!isRemoteFrom) {
+          // Shouldn't happen for federation relay, but validate just in case
+          try { process.kill(target.pid, 0); } catch {
+            deletePeer.run(target.id);
+            return Response.json({ ok: false, error: `Peer ${relayReq.to_id} is not running` }, { status: 410 });
+          }
+        }
+
+        // Insert the relayed message
+        const msgType = relayReq.type ?? "text";
+        const metadataStr = relayReq.metadata ? JSON.stringify(relayReq.metadata) : null;
+        const result = insertMessage.run(
+          relayReq.from_id, relayReq.to_id, relayReq.text,
+          msgType, metadataStr, relayReq.reply_to ?? null, new Date().toISOString()
+        );
+
+        federationLog(`Relayed message from ${relayReq.from_id} to ${relayReq.to_id} (msg_id=${result.lastInsertRowid})`);
+        return Response.json({ ok: true, message_id: Number(result.lastInsertRowid) });
+      }
+
+      default:
+        return Response.json({ error: "not found" }, { status: 404 });
+    }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    federationLog(`Error handling federation request: ${msg}`);
+    return Response.json({ error: msg }, { status: 500 });
+  }
+}
+
+// Start federation TLS server if enabled
+if (FEDERATION_ENABLED) {
+  (async () => {
+    try {
+      // Resolve hostname
+      federationHostname = getMachineHostname();
+
+      // US-004: Detect or use configured subnet
+      const configuredSubnet = process.env.CLAUDE_PEERS_FEDERATION_SUBNET;
+      if (configuredSubnet) {
+        federationSubnet = configuredSubnet;
+        federationLog(`Subnet restriction (configured): ${federationSubnet}`);
+      } else {
+        federationSubnet = await detectSubnet();
+        federationLog(`Subnet restriction (auto-detected): ${federationSubnet}`);
+      }
+
+      // Generate/load TLS certificate
+      const { certPath, keyPath } = await ensureTlsCert();
+
+      // Start federation TLS server on 0.0.0.0 (LAN-facing)
+      Bun.serve({
+        port: FEDERATION_PORT,
+        hostname: "0.0.0.0",
+        tls: {
+          cert: Bun.file(certPath),
+          key: Bun.file(keyPath),
+        },
+        fetch(req, server) { return handleFederationRequest(req, server); },
+      });
+
+      federationLog(`Listening on 0.0.0.0:${FEDERATION_PORT} (TLS) — hostname: ${federationHostname}`);
+
+      // US-009: Start periodic peer sync with connected remotes
+      const federationSyncTimer = setInterval(async () => {
+        try {
+          await syncRemotePeers();
+        } catch (err) {
+          federationLog(`Sync error (non-fatal): ${err}`);
+        }
+      }, FEDERATION_SYNC_INTERVAL_MS);
+
+      // Prevent the timer from keeping the process alive if broker is shutting down
+      if (federationSyncTimer.unref) federationSyncTimer.unref();
+    } catch (err) {
+      // CRITICAL: Federation failure must not crash the broker
+      const msg = err instanceof Error ? err.message : String(err);
+      federationLog(`Federation startup FAILED (broker continues without federation): ${msg}`);
+    }
+  })();
+} else {
+  brokerLog("Federation disabled (set CLAUDE_PEERS_FEDERATION_ENABLED=true to enable)");
+}

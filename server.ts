@@ -196,8 +196,8 @@ IMPORTANT: When you receive a <channel source="claude-peers" ...> message, RESPO
 Read the from_id, from_summary, and from_cwd attributes to understand who sent the message. Reply by calling send_message with their from_id. Check the type attribute for message intent: "query" means they're asking a question, "handoff" means task delegation, "response" means a reply to a previous message, "broadcast" means a group announcement.
 
 Available tools:
-- list_peers: Discover other Claude Code instances (scope: machine/directory/repo)
-- send_message: Send a message to another instance by ID. Supports optional type (text/query/response/handoff/broadcast), metadata (JSON object), and reply_to (message ID for threading).
+- list_peers: Discover other Claude Code instances (scope: machine/directory/repo/lan). Use 'lan' scope to find peers on other machines on the local network (requires federation).
+- send_message: Send a message to another instance by ID. Supports cross-machine messaging via LAN federation — remote peer IDs contain a colon (e.g., 'hostname:peer_id'). Supports optional type (text/query/response/handoff/broadcast), metadata (JSON object), and reply_to (message ID for threading).
 - broadcast_message: Send a message to all peers in a scope (machine/directory/repo). Useful for announcements, help requests, or coordination.
 - set_summary: Set a 1-2 sentence summary of what you're working on (visible to other peers)
 - set_name: Set your session name (from /rename). Helps peers identify you by name instead of opaque ID.
@@ -213,15 +213,15 @@ const TOOLS = [
   {
     name: "list_peers",
     description:
-      "List other Claude Code instances running on this machine. Returns their ID, working directory, git repo, and summary.",
+      "List other Claude Code instances. Returns their ID, working directory, git repo, and summary. Use scope 'lan' to discover peers on other machines on the local network (requires federation).",
     inputSchema: {
       type: "object" as const,
       properties: {
         scope: {
           type: "string" as const,
-          enum: ["machine", "directory", "repo"],
+          enum: ["machine", "directory", "repo", "lan"],
           description:
-            'Scope of peer discovery. "machine" = all instances on this computer. "directory" = same working directory. "repo" = same git repository (including worktrees or subdirectories).',
+            'Scope of peer discovery. "machine" = all instances on this computer. "directory" = same working directory. "repo" = same git repository (including worktrees or subdirectories). "lan" = all instances on this machine plus peers on connected LAN machines (requires federation to be enabled).',
         },
       },
       required: ["scope"],
@@ -230,13 +230,13 @@ const TOOLS = [
   {
     name: "send_message",
     description:
-      "Send a message to another Claude Code instance by peer ID. The message will be pushed into their session immediately via channel notification.",
+      "Send a message to another Claude Code instance by peer ID. The message will be pushed into their session immediately via channel notification. Supports cross-machine messaging: if the peer ID contains a colon (e.g., 'hostname:peer_id'), the message is routed through LAN federation.",
     inputSchema: {
       type: "object" as const,
       properties: {
         to_id: {
           type: "string" as const,
-          description: "The peer ID of the target Claude Code instance (from list_peers)",
+          description: "The peer ID of the target Claude Code instance (from list_peers). For remote peers on the LAN, use the 'hostname:peer_id' format returned by list_peers with scope 'lan'.",
         },
         message: {
           type: "string" as const,
@@ -301,7 +301,7 @@ const TOOLS = [
   {
     name: "broadcast_message",
     description:
-      "Send a message to all Claude Code instances in a scope (machine, directory, or repo). Useful for announcements, help requests, or coordination.",
+      "Send a message to all Claude Code instances in a scope (machine, directory, repo, or lan). Useful for announcements, help requests, or coordination. Use 'lan' to broadcast to peers on other machines via federation.",
     inputSchema: {
       type: "object" as const,
       properties: {
@@ -311,8 +311,8 @@ const TOOLS = [
         },
         scope: {
           type: "string" as const,
-          enum: ["machine", "directory", "repo"],
-          description: 'Scope of broadcast. "machine" = all instances. "directory" = same working directory. "repo" = same git repository.',
+          enum: ["machine", "directory", "repo", "lan"],
+          description: 'Scope of broadcast. "machine" = all instances. "directory" = same working directory. "repo" = same git repository. "lan" = all instances on this machine plus peers on connected LAN machines (requires federation).',
         },
       },
       required: ["message", "scope"],
@@ -331,7 +331,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
   switch (name) {
     case "list_peers": {
-      const scope = (args as { scope: string }).scope as "machine" | "directory" | "repo";
+      const scope = (args as { scope: string }).scope as "machine" | "directory" | "repo" | "lan";
       try {
         const peers = await brokerFetch<Peer[]>("/list-peers", {
           scope,
@@ -401,15 +401,34 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         };
       }
       try {
-        const sendBody: Record<string, unknown> = {
-          from_id: myId,
-          to_id,
-          text: message,
-        };
-        if (msgType) sendBody.type = msgType;
-        if (metadata) sendBody.metadata = metadata;
-        if (reply_to !== undefined) sendBody.reply_to = reply_to;
-        const result = await brokerFetch<{ ok: boolean; error?: string; message_id?: number }>("/send-message", sendBody);
+        // Detect remote peer: colon in to_id indicates "hostname:peer_id" format
+        const isRemotePeer = to_id.includes(":");
+
+        let result: { ok: boolean; error?: string; message_id?: number };
+
+        if (isRemotePeer) {
+          // Route through federation endpoint for cross-machine delivery
+          result = await brokerFetch<{ ok: boolean; error?: string }>("/federation/send-to-remote", {
+            to_id,
+            from_id: myId,
+            text: message,
+            type: msgType,
+            metadata,
+            reply_to,
+          });
+        } else {
+          // Local peer — use normal send-message endpoint
+          const sendBody: Record<string, unknown> = {
+            from_id: myId,
+            to_id,
+            text: message,
+          };
+          if (msgType) sendBody.type = msgType;
+          if (metadata) sendBody.metadata = metadata;
+          if (reply_to !== undefined) sendBody.reply_to = reply_to;
+          result = await brokerFetch<{ ok: boolean; error?: string; message_id?: number }>("/send-message", sendBody);
+        }
+
         if (!result.ok) {
           return {
             content: [{ type: "text" as const, text: `Failed to send: ${result.error}` }],
@@ -418,10 +437,11 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         }
         // Log outbound messages for observability
         const timestamp = new Date().toLocaleTimeString();
-        log(`--- MESSAGE SENT ---\n[${timestamp}] To ${to_id} (msg#${result.message_id}):\n${message}\n--- END MESSAGE ---`);
+        const msgIdTag = result.message_id != null ? `msg#${result.message_id}` : (isRemotePeer ? "remote" : "unknown");
+        log(`--- MESSAGE SENT ---\n[${timestamp}] To ${to_id} (${msgIdTag}):\n${message}\n--- END MESSAGE ---`);
         try {
           const logPath = MSG_LOG_PATH;
-          const entry = `\n${"=".repeat(60)}\n[${timestamp}] SENT to ${to_id} (msg#${result.message_id}):\n${message}\n`;
+          const entry = `\n${"=".repeat(60)}\n[${timestamp}] SENT to ${to_id} (${msgIdTag}):\n${message}\n`;
           await Bun.write(Bun.file(logPath), entry, { append: true });
         } catch {
           // Non-critical
@@ -429,7 +449,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         // Build preview: first line or first 120 chars
         const preview = message.split("\n")[0].slice(0, 120) + (message.length > 120 ? "..." : "");
         return {
-          content: [{ type: "text" as const, text: `Message sent to peer ${to_id} (msg#${result.message_id})\n> Preview: ${preview}` }],
+          content: [{ type: "text" as const, text: `Message sent to peer ${to_id} (${msgIdTag})\n> Preview: ${preview}` }],
         };
       } catch (e) {
         return {
@@ -545,7 +565,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     }
 
     case "broadcast_message": {
-      const { message, scope } = args as { message: string; scope: "machine" | "directory" | "repo" };
+      const { message, scope } = args as { message: string; scope: "machine" | "directory" | "repo" | "lan" };
       if (!myId) {
         return {
           content: [{ type: "text" as const, text: "Not registered with broker yet" }],

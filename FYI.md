@@ -1,5 +1,12 @@
 # FYI - claude-peers-mcp Decision Journal
 
+## 2026-03-24 - LAN Federation Phase A: Implementation Complete
+### What: Implemented all 13 user stories for LAN federation (manual mode) across 7 commits via 4 waves of parallel subagents
+### Why: Enables Claude Code sessions on different machines on the same LAN to discover each other and exchange messages
+### How: 4 waves of worktree subagents (2-3 parallel per wave): Wave 1 (types + federation.ts), Wave 2 (broker endpoints + CLI), Wave 3 (peer sync + server.ts), Wave 4 (test suite). Key implementation: federation.ts (155 lines, cert gen + HMAC + subnet), broker.ts (+434 lines, TLS server + endpoints + remote peer map), server.ts (LAN scope + remote routing), cli.ts (federation connect/disconnect/status). Architecture: broker.ts runs federation TLS server in-process; server.ts and cli.ts communicate via HTTP endpoints.
+### Impact: 96 tests (21 federation + 75 existing), 290 assertions, all passing. 7 commits on branch `ralph/lan-federation-phase-a`. Ready for PAL codereview and PR.
+### Related: `fe21727`, `67494ce`, `0b15f69`, `0c20250`, `7030c59`, `6a6d73f`, `b6a57a4`
+
 ## 2026-03-24 - PAL Codereview: Critical process isolation fix
 ### What: PAL codereview (Gemini 3.1 Pro) caught a critical architecture flaw in the prd.json — server.ts and broker.ts run as SEPARATE PROCESSES
 ### Why: Bug Fix #2 from PAL consensus incorrectly assumed server.ts and broker.ts run in the same process. In reality, server.ts spawns broker.ts via Bun.spawn() (line 106). They communicate via HTTP only.

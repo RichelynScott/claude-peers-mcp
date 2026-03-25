@@ -13,12 +13,15 @@
  *   bun cli.ts auto-summary <id>         — Generate and set a deterministic summary
  *   bun cli.ts rotate-token               — Rotate the auth token
  *   bun cli.ts kill-broker               — Stop the broker daemon
+ *   bun cli.ts federation connect <host>:<port>  — Connect to a remote broker
+ *   bun cli.ts federation disconnect <host>:<port> — Disconnect from a remote broker
+ *   bun cli.ts federation status         — Show federation status
  */
 
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { TOKEN_PATH, readTokenSync } from "./shared/token.ts";
-import type { BroadcastResponse } from "./shared/types.ts";
+import type { BroadcastResponse, FederationStatusResponse } from "./shared/types.ts";
 
 const BROKER_PORT = parseInt(process.env.CLAUDE_PEERS_PORT ?? "7899", 10);
 const BROKER_URL = `http://127.0.0.1:${BROKER_PORT}`;
@@ -186,6 +189,29 @@ export function buildSummary(opts: {
   }
 
   return `${prefix}Working in ${cwd}`;
+}
+
+/**
+ * Format an ISO timestamp as a human-readable uptime string (e.g., "2h 15m").
+ */
+export function formatUptime(isoTimestamp: string): string {
+  const connected = new Date(isoTimestamp).getTime();
+  const now = Date.now();
+  const diffMs = Math.max(0, now - connected);
+  const totalSec = Math.floor(diffMs / 1000);
+
+  if (totalSec < 60) return `${totalSec}s`;
+
+  const totalMin = Math.floor(totalSec / 60);
+  if (totalMin < 60) return `${totalMin}m`;
+
+  const hours = Math.floor(totalMin / 60);
+  const mins = totalMin % 60;
+  if (hours < 24) return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+
+  const days = Math.floor(hours / 24);
+  const remHours = hours % 24;
+  return remHours > 0 ? `${days}d ${remHours}h` : `${days}d`;
 }
 
 // ---------------------------------------------------------------------------
@@ -436,17 +462,148 @@ if (Bun.main === import.meta.path) {
       break;
     }
 
+    case "federation": {
+      const subCmd = process.argv[3];
+
+      switch (subCmd) {
+        case "connect": {
+          const target = process.argv[4];
+          if (!target || !target.includes(":")) {
+            console.error("Usage: bun cli.ts federation connect <host>:<port>");
+            process.exit(1);
+          }
+          const lastColon = target.lastIndexOf(":");
+          const host = target.slice(0, lastColon);
+          const port = parseInt(target.slice(lastColon + 1), 10);
+          if (isNaN(port) || port <= 0 || port > 65535) {
+            console.error(`Invalid port in "${target}". Expected <host>:<port>.`);
+            process.exit(1);
+          }
+          try {
+            const result = await brokerFetch<{
+              ok: boolean;
+              hostname?: string;
+              peer_count?: number;
+              error?: string;
+            }>("/federation/connect", { host, port });
+            if (result.ok) {
+              const remoteName = result.hostname ?? host;
+              const peerCount = result.peer_count ?? 0;
+              console.log(
+                `Connected to ${host}:${port} (${remoteName}). ${peerCount} remote peer${peerCount === 1 ? "" : "s"} available.`
+              );
+            } else {
+              console.error(`Failed: ${result.error ?? "Unknown error"}`);
+              process.exit(1);
+            }
+          } catch (e) {
+            console.error(`Error: ${e instanceof Error ? e.message : String(e)}`);
+            process.exit(1);
+          }
+          break;
+        }
+
+        case "disconnect": {
+          const target = process.argv[4];
+          if (!target || !target.includes(":")) {
+            console.error("Usage: bun cli.ts federation disconnect <host>:<port>");
+            process.exit(1);
+          }
+          const lastColon = target.lastIndexOf(":");
+          const host = target.slice(0, lastColon);
+          const port = parseInt(target.slice(lastColon + 1), 10);
+          if (isNaN(port) || port <= 0 || port > 65535) {
+            console.error(`Invalid port in "${target}". Expected <host>:<port>.`);
+            process.exit(1);
+          }
+          try {
+            const result = await brokerFetch<{ ok: boolean; error?: string }>(
+              "/federation/disconnect",
+              { host, port }
+            );
+            if (result.ok) {
+              console.log(`Disconnected from ${host}:${port}.`);
+            } else {
+              console.error(`Failed: ${result.error ?? "Unknown error"}`);
+              process.exit(1);
+            }
+          } catch (e) {
+            console.error(`Error: ${e instanceof Error ? e.message : String(e)}`);
+            process.exit(1);
+          }
+          break;
+        }
+
+        case "status": {
+          try {
+            const status = await brokerFetch<FederationStatusResponse>(
+              "/federation/status"
+            );
+            if (!status.enabled) {
+              console.log(
+                "Federation is disabled. Set CLAUDE_PEERS_FEDERATION_ENABLED=true to enable."
+              );
+              break;
+            }
+
+            if (status.remotes.length === 0) {
+              console.log(
+                `Federation enabled on port ${status.port}. No remote machines connected.`
+              );
+              break;
+            }
+
+            console.log(`Federation enabled on port ${status.port} (subnet: ${status.subnet})`);
+            console.log(`\nConnected remotes (${status.remotes.length}):`);
+            for (const r of status.remotes) {
+              const uptime = formatUptime(r.connected_at);
+              console.log(
+                `  ${r.host}:${r.port}  hostname=${r.hostname}  peers=${r.peer_count}  uptime=${uptime}`
+              );
+            }
+            console.log(`\nTotal remote peers: ${status.total_remote_peers}`);
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            if (
+              msg.includes("fetch") ||
+              msg.includes("ECONNREFUSED") ||
+              msg.includes("ConnectionRefused") ||
+              msg.includes("Unable to connect")
+            ) {
+              console.log("Broker is not running.");
+            } else {
+              console.error(`Error: ${msg}`);
+            }
+          }
+          break;
+        }
+
+        default:
+          console.error(`Unknown federation subcommand: ${subCmd ?? "(none)"}`);
+          console.error(
+            "Usage: bun cli.ts federation <connect|disconnect|status> [args]"
+          );
+          process.exit(1);
+      }
+      break;
+    }
+
     default:
       console.log(`claude-peers CLI
 
 Usage:
-  bun cli.ts status                          Show broker status and all peers
-  bun cli.ts peers                           List all peers
-  bun cli.ts send <id> <msg>                 Send a message to a peer
-  bun cli.ts broadcast <scope> <msg>         Broadcast to all peers in scope (machine/directory/repo)
-  bun cli.ts set-name <id> <name>            Set a peer's session name
-  bun cli.ts auto-summary <id>               Generate and set a deterministic summary
-  bun cli.ts rotate-token                    Rotate the auth token
-  bun cli.ts kill-broker                     Stop the broker daemon`);
+  bun cli.ts status                                Show broker status and all peers
+  bun cli.ts peers                                 List all peers
+  bun cli.ts send <id> <msg>                       Send a message to a peer
+  bun cli.ts broadcast <scope> <msg>               Broadcast to all peers in scope (machine/directory/repo)
+  bun cli.ts set-name <id> <name>                  Set a peer's session name
+  bun cli.ts auto-summary <id>                     Generate and set a deterministic summary
+  bun cli.ts rotate-token                          Rotate the auth token
+  bun cli.ts kill-broker                           Stop the broker daemon
+
+Federation:
+  bun cli.ts federation connect <host>:<port>      Connect to a remote broker
+  bun cli.ts federation disconnect <host>:<port>   Disconnect from a remote broker
+  bun cli.ts federation status                     Show federation status`);
   }
 }

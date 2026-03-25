@@ -2,55 +2,56 @@
 
 ## IMMEDIATE NEXT ACTION
 
-**LAN Federation PRD bugs FIXED. Ready to implement Phase A:**
+**LAN Federation Phase A is IMPLEMENTED on branch `ralph/lan-federation-phase-a`.** Next steps:
 
-1. **Implement Phase A** — prd.json has all 3 PAL consensus bugs fixed (`d1a5f31`). Two options:
-   - a. Run Ralph (`ralph.sh --tool claude`) using `tasks/ralph/prd-lan-discovery-phase-a.json` (13 stories)
-   - b. Manual implementation with subagents
-2. **hcom bridge** — Small (~50-80 lines). Forward claude-peers discovery to hcom event log. No PRD — direct subagent task.
-3. **clink dual-bus** — Small (~20-30 lines). PAL's clink registers spawned agents with both hcom AND claude-peers. No PRD — direct subagent task.
-
-### PRD Bugs FIXED (commit `d1a5f31`)
-
-| Bug | Location | Fix Applied |
-|-----|----------|-------------|
-| Auth confusion | US-006 | Federation endpoints use PSK only (not bearer+PSK) |
-| Routing ambiguity | US-011 | In-process function call, not `/federation/send-to-remote` |
-| HMAC canonicalization | US-005 | Documented top-level-only sorting as known limitation |
-
-### Implementation Gotchas (baked into prd.json notes)
-
-All gotchas from research are now embedded as `notes` on relevant stories in prd.json:
-- Ed25519 certs (US-002), WSL2 subnet detection (US-004), PID liveness bypass (US-006)
-- Hostname normalization (US-002), federation try/catch (US-003), Tailscale /32 (US-004)
-- fetch() TLS rejectUnauthorized:false (US-007)
+1. **PAL codereview** — Run codereview on the 7 implementation commits
+2. **Create PR** — `gh pr create` from `ralph/lan-federation-phase-a` → `main`
+3. **Manual testing** — Test between Riche (WSL2) and Rafi (Mac):
+   - Both machines: copy `~/.claude-peers-token` to the other machine
+   - Both machines: `CLAUDE_PEERS_FEDERATION_ENABLED=true` in env
+   - Machine A: `bun cli.ts federation status` → should show "enabled on port 7900"
+   - Machine A: `bun cli.ts federation connect <rafi-ip>:7900`
+   - Both machines: `list_peers(scope="lan")` → should show cross-machine peers
+   - Send a message from Machine A to a peer on Machine B
+4. **Phase B (mDNS)** — Optional enhancement, works on macOS, unreliable on WSL2
+5. **Phase C (WSL2 docs)** — Documentation and WSL2 detection
 
 ## COMPLETED THIS SESSION
 
 | Feature | Commit | Details |
 |---------|--------|---------|
-| Deep research report | `9007d28` | 14 sources, 296 lines at `.firecrawl/deep-research-lan-discovery.md` |
-| FYI.md deep research entry | `1ae4067` | Research findings documented |
-| PAL consensus + local verification | `7f452e9` | 4-model consensus (avg 8.25/10), 5 Bun smoke tests (all PASS) |
-| PRD bug fixes in prd.json | `d1a5f31` | 3 bugs fixed, research gotchas baked into story notes |
+| Deep research (14 sources) | `9007d28` | Bun TLS, WSL2 mDNS, bonjour-service |
+| PAL consensus (4 models, 8.25/10) | `7f452e9` | Architecture validated |
+| PRD bug fixes (consensus) | `d1a5f31` | Auth, routing, HMAC |
+| Critical architecture fix (codereview) | `1edfe5e` | Process isolation |
+| US-001: Federation types | `fe21727` | shared/types.ts |
+| US-002: TLS cert gen + HMAC + subnet | `67494ce` | federation.ts (155 lines) |
+| US-003+004+006: Broker federation | `0b15f69` | broker.ts (+434 lines) |
+| US-005+007+008+012: CLI commands | `0c20250` | cli.ts federation subcommand |
+| US-009: Peer list sync | `7030c59` | 30s interval, 90s stale timeout |
+| US-010+011: Server.ts LAN scope | `6a6d73f` | list_peers + send_message |
+| US-013: Test suite (21 tests) | `b6a57a4` | federation.test.ts (686 lines) |
 
-**Research pipeline completed: Phase 0 (deep research) → Phase 1 (local verification) → Phase 2 (PAL consensus) → Phase 3 (synthesis) → Phase 4 (prd.json bug fixes)**
+**Test results: 96 tests, 0 failures, 290 assertions across 4 files.**
 
 ## KEY FILES FOR CONTEXT
 
 | File | Purpose |
 |------|---------|
-| `tasks/prd-lan-discovery.md` | LAN federation PRD (3 phases, 577 lines) — original PRD (bugs in prose, fixed in prd.json) |
-| `tasks/ralph/prd-lan-discovery-phase-a.json` | Ralph JSON for Phase A (13 stories) — BUGS FIXED in `d1a5f31` |
-| `.firecrawl/deep-research-lan-discovery.md` | Deep research report (296 lines, 14 sources) |
-| `FYI.md` | Decision journal with PAL consensus findings |
-| `memory/project_lan_discovery.md` | Memory file with consolidated research conclusions |
+| `federation.ts` | New file — TLS cert gen, HMAC signing, subnet utils (155 lines) |
+| `federation.test.ts` | New file — 21 federation tests (686 lines) |
+| `broker.ts` | Modified — federation TLS server, endpoints, remote peer map (+434 lines) |
+| `server.ts` | Modified — LAN scope, remote peer routing |
+| `cli.ts` | Modified — federation connect/disconnect/status commands |
+| `shared/types.ts` | Modified — 9 new federation interfaces |
 
 ## CRITICAL BEHAVIOR RULES
 
 - Bun runtime, not Node.js
-- All broker endpoints require auth (`Authorization: Bearer <token>` from `~/.claude-peers-token`)
-- `/health` GET is exempt from auth
-- PAL MCP continuation_id for consensus: `435275f0-6c9c-4add-9992-3d08e68f021b`
-- Pre-existing TS errors (BunFile type in logging) — not introduced by us, safe to ignore
-- 75 tests, 205 assertions, all passing across 3 test files
+- broker.ts and server.ts are SEPARATE PROCESSES (server spawns broker via Bun.spawn)
+- Federation TLS server runs IN-PROCESS with broker.ts (shared memory)
+- server.ts and cli.ts communicate with broker via HTTP to localhost:7899
+- LAN-facing endpoints use PSK auth, local-facing use bearer token
+- All broker POST endpoints require auth (`Authorization: Bearer <token>`)
+- Federation is opt-in: `CLAUDE_PEERS_FEDERATION_ENABLED=true`
+- PAL continuation_id: `435275f0-6c9c-4add-9992-3d08e68f021b`
