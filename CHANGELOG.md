@@ -21,6 +21,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - 21 federation-specific tests bringing total to 100 tests, 302 assertions
 
 ### Fixed
+- Auto-detection and cleanup of stale MCP server processes on startup
+- New CLI `restart` command kills broker + all MCP servers for clean reconnect
 - Channel notification payload format — null values silently dropped by Claude Code, now omitted cleanly (`eb4c72b`)
 - IP spoofing vulnerability — use `server.requestIP()` instead of `X-Forwarded-For` header
 - HMAC canonicalization — nested objects now preserved during signing

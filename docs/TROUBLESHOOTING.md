@@ -4,10 +4,10 @@
 
 ```bash
 # Is the broker running?
-bun cli.ts status
+bun src/cli.ts status
 
 # Who's connected?
-bun cli.ts peers
+bun src/cli.ts peers
 
 # Watch message traffic in real time
 tail -f cpm-logs/messages.log
@@ -38,12 +38,37 @@ Note: Claude Code hook logs (chat.json, pre_tool_use.json, etc.) are in `logs/` 
 
 ## Common Issues
 
-### "Message sent" but recipient never received it
+### Messages Not Being Delivered
+
+**Symptoms**: Messages show as sent but recipient session never receives them. `send_message` returns success but no channel notification appears.
+
+**Most likely cause**: Stale MCP server processes from a previous session or path change.
+
+**Quick fix**:
+```bash
+bun src/cli.ts restart
+```
+Then run `/mcp` in each Claude Code session to reconnect.
+
+**How to diagnose**:
+```bash
+# Check how many MCP server processes are running
+ps aux | grep "bun.*server.ts" | grep -v grep
+
+# You should see exactly one per active Claude session
+# If you see extras (especially from different paths), that's the problem
+```
+
+**Root cause**: When the MCP config path changes or a session restarts, the old MCP server process may survive and continue polling/consuming messages. The new session registers a fresh MCP server, but the zombie consumes messages first.
+
+**Prevention**: As of v0.3.0, server.ts automatically detects and kills stale MCP server processes on startup. If you still hit this issue, use `bun src/cli.ts restart`.
+
+### "Message sent" but recipient never received it (version mismatch)
 
 **Cause**: The broker or recipient's MCP server is running old code. The two-phase delivery system (`/poll-messages` + `/ack-messages`) requires both broker AND MCP server to be on the same version.
 
 **Fix**:
-1. Kill the broker: `bun cli.ts kill-broker`
+1. Kill the broker: `bun src/cli.ts kill-broker` (or `bun src/cli.ts restart` for a full reset)
 2. Reconnect MCP in EVERY active session: run `/mcp` in each Claude Code instance
 3. The broker auto-restarts when the first session reconnects
 
@@ -64,7 +89,7 @@ Note: Claude Code hook logs (chat.json, pre_tool_use.json, etc.) are in `logs/` 
 # Find and kill the process holding the port
 lsof -ti :7899 | xargs kill -9
 # Wait a second, then let it auto-restart via MCP, or start manually:
-bun broker.ts
+bun src/broker.ts
 ```
 
 ### MCP tools not available / "Not registered with broker yet"
@@ -121,15 +146,15 @@ curl -s -X POST http://127.0.0.1:7899/unregister \
 
 ## After Code Changes — Restart Checklist
 
-Whenever you modify `broker.ts`, `server.ts`, or `shared/types.ts`:
+Whenever you modify `src/broker.ts`, `src/server.ts`, or `src/shared/types.ts`:
 
-1. **Build check**: `bun build broker.ts --outfile /tmp/check.js` (and same for server.ts, cli.ts)
+1. **Build check**: `bun build src/broker.ts --outfile /tmp/check.js` (and same for server.ts, cli.ts)
 2. **Run tests**: `bun test broker.test.ts`
-3. **Kill broker**: `bun cli.ts kill-broker`
+3. **Kill broker**: `bun src/cli.ts kill-broker` (or `bun src/cli.ts restart` for a full reset)
 4. **Reconnect MCP** in every active session: `/mcp` in each Claude Code instance
 5. The broker auto-launches with new code when the first session's MCP server connects
 
-Changes to `cli.ts` only do NOT require broker or MCP restart — the CLI runs fresh each invocation.
+Changes to `src/cli.ts` only do NOT require broker or MCP restart — the CLI runs fresh each invocation.
 
 ---
 
@@ -159,10 +184,10 @@ Claude Code Session A          Claude Code Session B
 
 | File | What it does | When to restart after changes |
 |------|-------------|-------------------------------|
-| `broker.ts` | HTTP server + SQLite | Kill broker (`bun cli.ts kill-broker`) |
-| `server.ts` | MCP server + channel push | Reconnect MCP (`/mcp` in session) |
-| `shared/types.ts` | TypeScript interfaces | Both broker + MCP |
-| `cli.ts` | CLI utility | No restart needed |
+| `src/broker.ts` | HTTP server + SQLite | Kill broker (`bun src/cli.ts kill-broker`) or `bun src/cli.ts restart` |
+| `src/server.ts` | MCP server + channel push | Reconnect MCP (`/mcp` in session) |
+| `src/shared/types.ts` | TypeScript interfaces | Both broker + MCP |
+| `src/cli.ts` | CLI utility | No restart needed |
 | `broker.test.ts` | Test suite | No restart needed |
 
 ## Environment Variables

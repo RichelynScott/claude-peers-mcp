@@ -28,16 +28,16 @@ There are three components:
 
 | Component | File | Description |
 |-----------|------|-------------|
-| **Broker** | `broker.ts` | Singleton HTTP daemon on `127.0.0.1:7899`. Manages peer registry and message routing in a SQLite database. Auto-launched by the first MCP server that starts. |
-| **MCP Server** | `server.ts` | One instance per Claude Code session, running as a stdio MCP server. Registers with the broker, exposes tools, polls for messages every second, and pushes them into the session via the `claude/channel` protocol. |
-| **CLI** | `cli.ts` | Command-line utility for inspecting broker state, listing peers, and sending messages from outside Claude Code. |
+| **Broker** | `src/broker.ts` | Singleton HTTP daemon on `127.0.0.1:7899`. Manages peer registry and message routing in a SQLite database. Auto-launched by the first MCP server that starts. |
+| **MCP Server** | `src/server.ts` | One instance per Claude Code session, running as a stdio MCP server. Registers with the broker, exposes tools, polls for messages every second, and pushes them into the session via the `claude/channel` protocol. |
+| **CLI** | `src/cli.ts` | Command-line utility for inspecting broker state, listing peers, and sending messages from outside Claude Code. |
 
 Supporting files:
 
 | File | Purpose |
 |------|---------|
-| `shared/types.ts` | TypeScript interfaces for all broker API request/response types |
-| `shared/summarize.ts` | Auto-summary generation via OpenAI `gpt-5.4-nano` (optional, requires `OPENAI_API_KEY`) |
+| `src/shared/types.ts` | TypeScript interfaces for all broker API request/response types |
+| `src/shared/summarize.ts` | Auto-summary generation via OpenAI `gpt-5.4-nano` (optional, requires `OPENAI_API_KEY`) |
 
 ## Setup
 
@@ -54,7 +54,7 @@ bun install
 Add to your user-scoped MCP configuration so it is available in every Claude Code session:
 
 ```bash
-claude mcp add --scope user --transport stdio claude-peers -- bun ~/MCPs/claude-peers-mcp/server.ts
+claude mcp add --scope user --transport stdio claude-peers -- bun ~/MCPs/claude-peers-mcp/src/server.ts
 ```
 
 ### 3. Run with channel push
@@ -89,7 +89,7 @@ These tools are available to Claude Code when the MCP server is running:
 
 ## CLI Commands
 
-Run from the project directory with `bun cli.ts <command>`:
+Run from the project directory with `bun src/cli.ts <command>`:
 
 | Command | Description |
 |---------|-------------|
@@ -98,15 +98,17 @@ Run from the project directory with `bun cli.ts <command>`:
 | `send <id> <message>` | Send a message to a peer by ID |
 | `set-name <id> <name>` | Set a peer's session name from the command line |
 | `kill-broker` | Stop the broker daemon |
+| `restart` | Kill broker + all MCP server processes, then restart cleanly. Use after path changes or version upgrades. |
 
 Examples:
 
 ```bash
-bun cli.ts status
-bun cli.ts peers
-bun cli.ts send abc12345 "What branch are you on?"
-bun cli.ts set-name abc12345 "MyAgent"
-bun cli.ts kill-broker
+bun src/cli.ts status
+bun src/cli.ts peers
+bun src/cli.ts send abc12345 "What branch are you on?"
+bun src/cli.ts set-name abc12345 "MyAgent"
+bun src/cli.ts kill-broker
+bun src/cli.ts restart
 ```
 
 ## Observability
@@ -185,7 +187,7 @@ Changes made beyond [louislva/claude-peers-mcp](https://github.com/louislva/clau
 ### Run the broker directly
 
 ```bash
-bun broker.ts
+bun src/broker.ts
 ```
 
 The broker logs to stderr. It creates (or opens) the SQLite database at the configured path.
@@ -193,7 +195,7 @@ The broker logs to stderr. It creates (or opens) the SQLite database at the conf
 ### Run the MCP server directly
 
 ```bash
-bun server.ts
+bun src/server.ts
 ```
 
 This auto-launches the broker if it is not already running, then connects via stdio.
@@ -214,12 +216,18 @@ bunx tsc --noEmit
 
 ```
 claude-peers-mcp/
-  broker.ts            # HTTP broker daemon + SQLite
-  server.ts            # MCP stdio server (one per Claude Code session)
-  cli.ts               # CLI utility
-  shared/
-    types.ts           # TypeScript interfaces
-    summarize.ts       # Auto-summary via OpenAI
+  src/
+    broker.ts          # HTTP broker daemon + SQLite
+    server.ts          # MCP stdio server (one per Claude Code session)
+    cli.ts             # CLI utility
+    federation.ts      # LAN federation transport (TLS, HMAC, cert gen)
+    index.ts           # Package entry point
+    shared/
+      types.ts         # TypeScript interfaces
+      summarize.ts     # Auto-summary via git context
+      token.ts         # Shared bearer token reader
+  docs/
+    TROUBLESHOOTING.md # Diagnostics and common issues
   package.json
   CLAUDE.md            # Project instructions for Claude Code
   FYI.md               # Decision journal and backlog

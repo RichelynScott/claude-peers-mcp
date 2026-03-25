@@ -1,5 +1,11 @@
 # FYI - claude-peers-mcp Decision Journal
 
+## 2026-03-25 - Stale MCP server auto-cleanup
+### What: Added automatic detection and cleanup of zombie MCP server processes + CLI restart command
+### Why: After repo restructure (server.ts → src/server.ts), old MCP server processes kept running from the old path, stealing messages. Non-technical users had to manually kill PIDs — unacceptable for public release.
+### How: Three-layer fix: (1) server.ts startup scans /proc for stale processes running server.ts from different paths and kills them, (2) new `bun src/cli.ts restart` command kills broker + all MCP servers, (3) existing TTY-based eviction on registration. Root cause: MCP server processes are spawned as detached children that survive session restarts.
+### Impact: Non-technical users never need to investigate PIDs or kill processes manually. Messaging reliability greatly improved.
+
 ## 2026-03-24 - LAN Federation Phase A: Implementation Complete
 ### What: Implemented all 13 user stories for LAN federation (manual mode) across 7 commits via 4 waves of parallel subagents
 ### Why: Enables Claude Code sessions on different machines on the same LAN to discover each other and exchange messages
