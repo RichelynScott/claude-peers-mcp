@@ -17,6 +17,7 @@
  *   bun cli.ts federation connect <host>:<port>  — Connect to a remote broker
  *   bun cli.ts federation disconnect <host>:<port> — Disconnect from a remote broker
  *   bun cli.ts federation status         — Show federation status
+ *   bun cli.ts federation setup          — Guided federation setup (WSL2/macOS port forwarding)
  */
 
 import * as path from "node:path";
@@ -213,6 +214,225 @@ export function formatUptime(isoTimestamp: string): string {
   const days = Math.floor(hours / 24);
   const remHours = hours % 24;
   return remHours > 0 ? `${days}d ${remHours}h` : `${days}d`;
+}
+
+// ---------------------------------------------------------------------------
+// Federation setup wizard
+// ---------------------------------------------------------------------------
+
+async function federationSetup(): Promise<void> {
+  const FEDERATION_PORT = parseInt(process.env.CLAUDE_PEERS_FEDERATION_PORT ?? "7900", 10);
+
+  // --- Environment detection ---
+  const isWSL2 =
+    !!process.env.WSL_DISTRO_NAME ||
+    (await Bun.file("/proc/sys/fs/binfmt_misc/WSLInterop").exists());
+  const isMac = process.platform === "darwin";
+
+  const platformLabel = isWSL2 ? "WSL2" : isMac ? "macOS" : "Linux";
+  console.log(`\n[Federation Setup — ${platformLabel} Detected]\n`);
+
+  // --- Step 1: Token file ---
+  const tokenExists = await Bun.file(TOKEN_PATH).exists();
+  if (tokenExists) {
+    console.log(`  1. ✓ Token file exists (${TOKEN_PATH})`);
+  } else {
+    console.log(`  1. ✗ Token file missing (${TOKEN_PATH})`);
+    console.log(`     Create one with: bun src/cli.ts rotate-token`);
+    console.log("");
+    return;
+  }
+
+  // --- Step 2: Federation enabled? ---
+  const fedEnabled = process.env.CLAUDE_PEERS_FEDERATION_ENABLED === "true";
+  if (fedEnabled) {
+    console.log("  2. ✓ Federation enabled (CLAUDE_PEERS_FEDERATION_ENABLED=true)");
+  } else {
+    console.log("  2. ✗ Federation not enabled");
+    console.log("     Set CLAUDE_PEERS_FEDERATION_ENABLED=true in your environment");
+    console.log("     (e.g., add to ~/.zshrc and restart the broker)");
+    console.log("");
+    return;
+  }
+
+  // --- Step 3: Broker running with federation? ---
+  let brokerOk = false;
+  let federationListening = false;
+  try {
+    await brokerFetch<{ status: string }>("/health");
+    brokerOk = true;
+    const fedStatus = await brokerFetch<FederationStatusResponse>("/federation/status");
+    federationListening = fedStatus.enabled;
+  } catch {
+    // broker not running or federation endpoint failed
+  }
+
+  if (!brokerOk) {
+    console.log("  3. ✗ Broker is not running");
+    console.log("     Start a Claude Code session or run: bun src/broker.ts");
+    console.log("");
+    return;
+  }
+  if (!federationListening) {
+    console.log("  3. ✗ Broker is running but federation is not active");
+    console.log("     Restart the broker with CLAUDE_PEERS_FEDERATION_ENABLED=true");
+    console.log("     Run: bun src/cli.ts kill-broker   (it will auto-restart with the env var)");
+    console.log("");
+    return;
+  }
+  console.log(`  3. ✓ Broker running with federation on port ${FEDERATION_PORT}`);
+
+  // --- Platform-specific network setup ---
+  if (isWSL2) {
+    await federationSetupWSL2(FEDERATION_PORT);
+  } else if (isMac) {
+    await federationSetupMacOS(FEDERATION_PORT);
+  } else {
+    await federationSetupLinux(FEDERATION_PORT);
+  }
+
+  // --- Token sharing guidance (always) ---
+  console.log(`\n[Token Sharing]`);
+  console.log(`Both machines must share the same token for authentication.`);
+  console.log(`Copy your token to the remote machine:`);
+  console.log(`  scp ~/.claude-peers-token user@<remote-ip>:~/.claude-peers-token`);
+  console.log(`\nOr manually: the token is a single line in ~/.claude-peers-token\n`);
+}
+
+async function federationSetupWSL2(fedPort: number): Promise<void> {
+  console.log("  4. Setting up Windows port forwarding...");
+
+  // Get WSL2 internal IP
+  const wslIpProc = Bun.spawnSync(["hostname", "-I"], {
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const wslIp = new TextDecoder().decode(wslIpProc.stdout).trim().split(" ")[0];
+  if (!wslIp) {
+    console.log("     ✗ Could not determine WSL2 IP address");
+    return;
+  }
+  console.log(`     WSL2 IP: ${wslIp}`);
+  console.log(`     Windows will forward port ${fedPort} to WSL2`);
+  console.log(`     (This requires Windows admin — you may see a UAC prompt)`);
+
+  // Set up port forwarding via elevated PowerShell
+  const setupCmd = `Start-Process powershell -ArgumentList '-NoProfile -Command "netsh interface portproxy add v4tov4 listenport=${fedPort} listenaddress=0.0.0.0 connectport=${fedPort} connectaddress=${wslIp}; New-NetFirewallRule -DisplayName Claude-Peers-Federation -Direction Inbound -Action Allow -Protocol TCP -LocalPort ${fedPort} -ErrorAction SilentlyContinue"' -Verb RunAs`;
+
+  const fwdProc = Bun.spawnSync(["powershell.exe", "-NoProfile", "-Command", setupCmd], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  if (fwdProc.exitCode !== 0) {
+    const stderr = new TextDecoder().decode(fwdProc.stderr).trim();
+    console.log(`     ⚠ Port forwarding command returned exit code ${fwdProc.exitCode}`);
+    if (stderr) console.log(`     ${stderr}`);
+    console.log(`     You may need to run this manually from an elevated PowerShell:`);
+    console.log(`     netsh interface portproxy add v4tov4 listenport=${fedPort} listenaddress=0.0.0.0 connectport=${fedPort} connectaddress=${wslIp}`);
+    console.log(`     New-NetFirewallRule -DisplayName Claude-Peers-Federation -Direction Inbound -Action Allow -Protocol TCP -LocalPort ${fedPort}`);
+  } else {
+    console.log("     ✓ Port forwarding configured");
+  }
+
+  // Get Windows LAN IP
+  const winIpProc = Bun.spawnSync(
+    [
+      "powershell.exe",
+      "-NoProfile",
+      "-Command",
+      "Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -like '192.168.*' -or $_.IPAddress -like '10.*' } | Select-Object -First 1 -ExpandProperty IPAddress",
+    ],
+    { stdout: "pipe", stderr: "ignore" }
+  );
+  const windowsLanIp = new TextDecoder().decode(winIpProc.stdout).trim();
+
+  if (windowsLanIp) {
+    console.log(`     Your LAN IP: ${windowsLanIp}`);
+    console.log("");
+    console.log(`     Remote machines can connect with:`);
+    console.log(`       bun src/cli.ts federation connect ${windowsLanIp}:${fedPort}`);
+  } else {
+    console.log("     ⚠ Could not determine Windows LAN IP");
+    console.log("     Check your IP manually: ipconfig (in PowerShell/CMD)");
+  }
+
+  console.log("");
+  console.log(`  5. To connect to a remote machine:`);
+  console.log(`     bun src/cli.ts federation connect <remote-ip>:${fedPort}`);
+}
+
+async function federationSetupMacOS(fedPort: number): Promise<void> {
+  console.log("  4. Checking firewall...");
+
+  // Check if macOS firewall is on
+  const fwProc = Bun.spawnSync(
+    ["defaults", "read", "/Library/Preferences/com.apple.alf", "globalstate"],
+    { stdout: "pipe", stderr: "ignore" }
+  );
+  const fwState = new TextDecoder().decode(fwProc.stdout).trim();
+  if (fwState === "0") {
+    console.log("     ✓ macOS firewall is off (no action needed)");
+  } else {
+    console.log("     macOS firewall is on — ensure Bun is allowed:");
+    console.log(
+      `     sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add $(which bun) --unblockapp $(which bun)`
+    );
+  }
+
+  // Get macOS LAN IP
+  const macIpProc = Bun.spawnSync(["ipconfig", "getifaddr", "en0"], {
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const macIp = new TextDecoder().decode(macIpProc.stdout).trim();
+
+  if (macIp) {
+    console.log(`     Your LAN IP: ${macIp}`);
+    console.log("");
+    console.log(`     Remote machines can connect with:`);
+    console.log(`       bun src/cli.ts federation connect ${macIp}:${fedPort}`);
+  } else {
+    console.log("     ⚠ Could not determine LAN IP (en0 not active?)");
+    console.log("     Check your IP manually: ipconfig getifaddr en0 (or en1 for ethernet)");
+  }
+
+  console.log("");
+  console.log(`  5. To connect to a remote machine:`);
+  console.log(`     bun src/cli.ts federation connect <remote-ip>:${fedPort}`);
+}
+
+async function federationSetupLinux(fedPort: number): Promise<void> {
+  console.log("  4. Checking network...");
+
+  // Get LAN IP
+  const ipProc = Bun.spawnSync(["hostname", "-I"], {
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  const allIps = new TextDecoder().decode(ipProc.stdout).trim().split(/\s+/);
+  // Prefer 192.168.x or 10.x addresses
+  const lanIp =
+    allIps.find((ip) => ip.startsWith("192.168.") || ip.startsWith("10.")) ??
+    allIps[0];
+
+  if (lanIp) {
+    console.log(`     Your LAN IP: ${lanIp}`);
+    console.log("");
+    console.log(`     Remote machines can connect with:`);
+    console.log(`       bun src/cli.ts federation connect ${lanIp}:${fedPort}`);
+    console.log("");
+    console.log(`     If connections are refused, check your firewall:`);
+    console.log(`       sudo ufw allow ${fedPort}/tcp   # UFW`);
+    console.log(`       sudo firewall-cmd --add-port=${fedPort}/tcp --permanent   # firewalld`);
+  } else {
+    console.log("     ⚠ Could not determine LAN IP");
+    console.log("     Check your IP manually: hostname -I");
+  }
+
+  console.log("");
+  console.log(`  5. To connect to a remote machine:`);
+  console.log(`     bun src/cli.ts federation connect <remote-ip>:${fedPort}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -605,10 +825,15 @@ if (Bun.main === import.meta.path) {
           break;
         }
 
+        case "setup": {
+          await federationSetup();
+          break;
+        }
+
         default:
           console.error(`Unknown federation subcommand: ${subCmd ?? "(none)"}`);
           console.error(
-            "Usage: bun cli.ts federation <connect|disconnect|status> [args]"
+            "Usage: bun cli.ts federation <connect|disconnect|setup|status> [args]"
           );
           process.exit(1);
       }
@@ -632,6 +857,7 @@ Usage:
 Federation:
   bun cli.ts federation connect <host>:<port>      Connect to a remote broker
   bun cli.ts federation disconnect <host>:<port>   Disconnect from a remote broker
-  bun cli.ts federation status                     Show federation status`);
+  bun cli.ts federation status                     Show federation status
+  bun cli.ts federation setup                      Guided federation setup (WSL2/macOS port forwarding)`);
   }
 }

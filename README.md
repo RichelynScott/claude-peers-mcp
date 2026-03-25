@@ -99,6 +99,10 @@ Run from the project directory with `bun src/cli.ts <command>`:
 | `set-name <id> <name>` | Set a peer's session name from the command line |
 | `kill-broker` | Stop the broker daemon |
 | `restart` | Kill broker + all MCP server processes, then restart cleanly. Use after path changes or version upgrades. |
+| `federation setup` | Guided federation setup wizard (WSL2/macOS/Linux) |
+| `federation connect <host>:<port>` | Connect to a remote broker |
+| `federation disconnect <host>:<port>` | Disconnect from a remote broker |
+| `federation status` | Show federation state and connected remotes |
 
 Examples:
 
@@ -110,6 +114,40 @@ bun src/cli.ts set-name abc12345 "MyAgent"
 bun src/cli.ts kill-broker
 bun src/cli.ts restart
 ```
+
+## Federation Setup
+
+Federation allows claude-peers instances on different machines to discover and message each other over your LAN. The guided setup command handles environment detection, prerequisites, and platform-specific network configuration:
+
+```bash
+# Enable federation and run setup
+export CLAUDE_PEERS_FEDERATION_ENABLED=true
+bun src/cli.ts federation setup
+```
+
+The wizard detects your platform (WSL2, macOS, or Linux) and walks you through:
+- **WSL2**: Configures Windows port forwarding (`netsh portproxy`) and firewall rules via an elevated PowerShell prompt
+- **macOS**: Checks the application firewall and prints the allow command if needed
+- **Linux**: Detects LAN IP and prints firewall commands (UFW / firewalld)
+
+Both machines must share the same authentication token. The setup command prints `scp` instructions for copying `~/.claude-peers-token` to the remote machine.
+
+Once setup is complete on both machines, connect them:
+
+```bash
+bun src/cli.ts federation connect <remote-ip>:7900
+```
+
+Other federation CLI commands:
+
+| Command | Description |
+|---------|-------------|
+| `federation status` | Show federation state, connected remotes, and remote peer counts |
+| `federation connect <host>:<port>` | Connect to a remote broker |
+| `federation disconnect <host>:<port>` | Disconnect from a remote broker |
+| `federation setup` | Guided setup wizard (WSL2/macOS/Linux) |
+
+For troubleshooting, see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
 ## Observability
 

@@ -163,6 +163,22 @@ curl -s -X POST http://127.0.0.1:7899/unregister \
   -d '{"id": "STALE_PEER_ID"}'
 ```
 
+### Federation Setup — Guided Wizard
+
+If you're setting up federation for the first time, the guided setup command handles environment detection, prerequisite checks, and platform-specific configuration (WSL2 port forwarding, macOS firewall, etc.):
+
+```bash
+CLAUDE_PEERS_FEDERATION_ENABLED=true bun src/cli.ts federation setup
+```
+
+It will walk you through:
+1. Token file verification
+2. Federation env var check
+3. Broker status check
+4. Platform-specific network setup (WSL2 port forwarding, macOS firewall, or Linux firewall hints)
+5. LAN IP detection and remote connection instructions
+6. Token sharing guidance
+
 ### Federation Connect Fails: "Connection rejected: outside allowed subnet"
 
 **Symptoms**: `bun src/cli.ts federation connect <ip>:7900` returns connection rejected or handshake failed.
