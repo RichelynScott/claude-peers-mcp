@@ -79,7 +79,7 @@ beforeAll(async () => {
   testToken = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
   fs.writeFileSync(TEST_TOKEN_PATH, testToken + "\n", { mode: 0o600 });
 
-  brokerProc = Bun.spawn(["bun", "broker.ts"], {
+  brokerProc = Bun.spawn(["bun", "src/broker.ts"], {
     cwd: "/home/riche/MCPs/claude-peers-mcp",
     env: {
       ...process.env,

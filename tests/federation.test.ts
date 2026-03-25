@@ -19,7 +19,7 @@ import {
   verifySignature,
   ipInSubnet,
   getMachineHostname,
-} from "./federation.ts";
+} from "../src/federation.ts";
 
 // --- Test configuration ---
 const TEST_BROKER_PORT = 18901;
@@ -192,7 +192,7 @@ beforeAll(async () => {
   fs.chmodSync(TEST_KEY_PATH, 0o600);
 
   // Start broker with federation enabled
-  brokerProc = Bun.spawn(["bun", "broker.ts"], {
+  brokerProc = Bun.spawn(["bun", "src/broker.ts"], {
     cwd: "/home/riche/MCPs/claude-peers-mcp",
     env: {
       ...process.env,
@@ -262,7 +262,7 @@ describe("TLS & Startup", () => {
     const noFedPort = 18903;
     fs.writeFileSync(noFedTokenPath, TEST_PSK + "\n", { mode: 0o600 });
 
-    const noFedProc = Bun.spawn(["bun", "broker.ts"], {
+    const noFedProc = Bun.spawn(["bun", "src/broker.ts"], {
       cwd: "/home/riche/MCPs/claude-peers-mcp",
       env: {
         ...process.env,

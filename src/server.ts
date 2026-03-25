@@ -10,7 +10,7 @@
  *   claude --dangerously-load-development-channels server:claude-peers
  *
  * With .mcp.json:
- *   { "claude-peers": { "command": "bun", "args": ["./server.ts"] } }
+ *   { "claude-peers": { "command": "bun", "args": ["./src/server.ts"] } }
  */
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -125,7 +125,7 @@ async function ensureBroker(): Promise<void> {
 
 // --- Utility ---
 
-const CPM_LOG_DIR = new URL("./cpm-logs", import.meta.url).pathname;
+const CPM_LOG_DIR = new URL("../cpm-logs", import.meta.url).pathname;
 const MSG_LOG_PATH = `${CPM_LOG_DIR}/messages.log`;
 const SERVER_LOG_PATH = `${CPM_LOG_DIR}/server.log`;
 

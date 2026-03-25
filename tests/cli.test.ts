@@ -7,7 +7,7 @@
  */
 import { test, expect, describe, beforeAll, afterAll } from "bun:test";
 import * as fs from "node:fs";
-import { buildSummary, getGitRepoName, getGitBranchName } from "./cli.ts";
+import { buildSummary, getGitRepoName, getGitBranchName } from "../src/cli.ts";
 
 // ---------------------------------------------------------------------------
 // Unit Tests: buildSummary (pure function)
@@ -174,7 +174,7 @@ async function registerPeer(overrides: Record<string, unknown> = {}): Promise<st
   return data.id;
 }
 
-const CLI_PATH = "/home/riche/MCPs/claude-peers-mcp/cli.ts";
+const CLI_PATH = "/home/riche/MCPs/claude-peers-mcp/src/cli.ts";
 
 // Helper: run cli.ts as a subprocess with custom env
 async function runCli(
@@ -209,7 +209,7 @@ describe("auto-summary integration", () => {
     testToken = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
     fs.writeFileSync(TEST_TOKEN_FILE, testToken + "\n", { mode: 0o600 });
 
-    brokerProc = Bun.spawn(["/home/riche/.bun/bin/bun", "broker.ts"], {
+    brokerProc = Bun.spawn(["/home/riche/.bun/bin/bun", "src/broker.ts"], {
       cwd: "/home/riche/MCPs/claude-peers-mcp",
       env: testEnv(),
       stdio: ["ignore", "ignore", "pipe"],

@@ -1,5 +1,5 @@
 {
-  "indexed_at": "2026-03-24T17:00:04.431809",
+  "indexed_at": "2026-03-25T10:36:44.871469",
   "root": ".",
   "project_structure": {
     "type": "tree",
@@ -65,15 +65,15 @@
     "FYI.md": {
       "sections": [
         "FYI - claude-peers-mcp Decision Journal",
-        "2026-03-24 - PAL Consensus + Local Verification: LAN Federation Architecture Validated",
-        "What: Multi-model consensus (4 frontier models) + 5 local Bun API smoke tests validated the federation architecture and identified PRD refinements",
-        "Why: Research-to-PRD Pipeline Phase 2 \u2014 validate architecture with external models before implementation",
-        "How: PAL consensus (frontier preset): Gemini 3.1 Pro (9/10), Claude Opus 4.6 (8/10), GLM-5 (8/10), Claude Sonnet 4.6 (8/10). GPT-5.4 and GPT-5.3 Codex hit OpenAI quota limits. Local smoke tests verified HMAC-SHA256, OpenSSL cert gen (RSA + Ed25519), Bun.serve() TLS, os.networkInterfaces(), WSL2 detection.",
-        "Impact: Architecture confirmed sound (avg 8.25/10). Key decisions and PRD refinements:",
-        "Related: PAL continuation_id: `435275f0-6c9c-4add-9992-3d08e68f021b`",
-        "2026-03-24 - Deep Research: LAN Discovery Prerequisites",
-        "What: Iterative recursive deep research (breadth 4, depth 2) on Bun TLS, WSL2 mDNS, bonjour-service compatibility, self-signed cert generation, and federated broker patterns",
-        "Why: PRD `tasks/prd-lan-discovery.md` explicitly requires deep research before implementation. Key unknowns: Can Bun serve TLS? Will mDNS work on WSL2? Can Bun generate self-signed certs?"
+        "2026-03-24 - LAN Federation Phase A: Implementation Complete",
+        "What: Implemented all 13 user stories for LAN federation (manual mode) across 7 commits via 4 waves of parallel subagents",
+        "Why: Enables Claude Code sessions on different machines on the same LAN to discover each other and exchange messages",
+        "How: 4 waves of worktree subagents (2-3 parallel per wave): Wave 1 (types + federation.ts), Wave 2 (broker endpoints + CLI), Wave 3 (peer sync + server.ts), Wave 4 (test suite). Key implementation: federation.ts (155 lines, cert gen + HMAC + subnet), broker.ts (+434 lines, TLS server + endpoints + remote peer map), server.ts (LAN scope + remote routing), cli.ts (federation connect/disconnect/status). Architecture: broker.ts runs federation TLS server in-process; server.ts and cli.ts communicate via HTTP endpoints.",
+        "Impact: 96 tests (21 federation + 75 existing), 290 assertions, all passing. 7 commits on branch `ralph/lan-federation-phase-a`. Ready for PAL codereview and PR.",
+        "Related: `fe21727`, `67494ce`, `0b15f69`, `0c20250`, `7030c59`, `6a6d73f`, `b6a57a4`",
+        "2026-03-24 - PAL Codereview: Critical process isolation fix",
+        "What: PAL codereview (Gemini 3.1 Pro) caught a critical architecture flaw in the prd.json \u2014 server.ts and broker.ts run as SEPARATE PROCESSES",
+        "Why: Bug Fix #2 from PAL consensus incorrectly assumed server.ts and broker.ts run in the same process. In reality, server.ts spawns broker.ts via Bun.spawn() (line 106). They communicate via HTTP only."
       ],
       "architecture_hints": []
     },
@@ -174,6 +174,19 @@
       ],
       "architecture_hints": []
     },
+    "tasks/RAFI-FEDERATION-SETUP.md": {
+      "sections": [
+        "LAN Federation Setup for Rafi's Mac",
+        "Step 1: Update the repo",
+        "Step 2: Install the shared PSK token",
+        "Step 3: Enable federation",
+        "Step 4: Restart broker",
+        "Step 5: macOS firewall",
+        "Step 6: Tell Riche your Mac's IP",
+        "Verify"
+      ],
+      "architecture_hints": []
+    },
     "tasks/prd-auto-summary-cli.md": {
       "sections": [
         "PRD: Deterministic Auto-Summary CLI Command",
@@ -212,9 +225,18 @@
       ],
       "architecture_hints": []
     },
-    "../../.claude/projects/-home-riche-MCPs-claude-peers-mcp/memory/MEMORY.md": {
+    "CHANGELOG.md": {
       "sections": [
-        "Memory Index \u2014 claude-peers-mcp"
+        "Changelog",
+        "[Unreleased]",
+        "[0.3.0] - 2026-03-25",
+        "Added",
+        "Fixed",
+        "Removed",
+        "[0.2.0] - 2026-03-24",
+        "Added",
+        "Fixed",
+        "Changed"
       ],
       "architecture_hints": []
     }
@@ -224,20 +246,99 @@
     "tasks/ralph": "Test files and test utilities"
   },
   "stats": {
-    "total_files": 19,
-    "total_directories": 47,
+    "total_files": 21,
+    "total_directories": 48,
     "fully_parsed": {
-      "typescript": 10
+      "typescript": 12
     },
     "listed_only": {
       "json": 9
     },
-    "markdown_files": 17
+    "markdown_files": 16
   },
   "files": {
     ".mcp.json": {
       "language": "json",
       "parsed": false
+    },
+    "federation.ts": {
+      "language": "typescript",
+      "parsed": true,
+      "imports": [
+        "bun",
+        "node:fs",
+        "node:os",
+        "node:crypto"
+      ],
+      "functions": {
+        "federationLog": "(msg: string): void",
+        "getMachineHostname": "(): string",
+        "ensureTlsCert": "async (certPath: string = process.env.CLAUDE_PEERS_FEDERATION_CERT || DEFAULT_CERT_PATH, keyPath: string = process.env.CLAUDE_PEERS_FEDERATION_KEY || DEFAULT_KEY_PATH,): Promise<",
+        "signMessage": {
+          "signature": "(body: Record<string, unknown>, psk: string): string",
+          "called_by": [
+            "verifySignature"
+          ]
+        },
+        "verifySignature": {
+          "calls": [
+            "signMessage"
+          ],
+          "signature": "(body: Record<string, unknown>, signature: string, psk: string): boolean"
+        },
+        "ipToInt": {
+          "signature": "(ip: string): number",
+          "called_by": [
+            "ipInSubnet",
+            "detectSubnet"
+          ]
+        },
+        "ipInSubnet": {
+          "calls": [
+            "ipToInt"
+          ],
+          "signature": "(ip: string, cidr: string): boolean"
+        },
+        "detectSubnet": {
+          "calls": [
+            "ipToInt"
+          ],
+          "signature": "async (): Promise<string>"
+        },
+        "federationFetch": "async (url: string, body: Record<string, unknown>, pskToken: string, timeoutMs: number = 5000): Promise<"
+      },
+      "classes": {},
+      "constants": {
+        "DEFAULT_CERT_PATH": "str",
+        "DEFAULT_KEY_PATH": "str"
+      },
+      "variables": [
+        "line",
+        "logDir",
+        "logPath",
+        "h",
+        "cn",
+        "expected",
+        "bits",
+        "mask",
+        "routeProc",
+        "routeText",
+        "devMatch",
+        "ifaceProc",
+        "ifaceText",
+        "inetMatch",
+        "ip",
+        "prefix",
+        "network",
+        "networkIp",
+        "ifaces",
+        "proc",
+        "output",
+        "lines",
+        "statusCode",
+        "responseBody"
+      ],
+      "call_graph": {}
     },
     "cli.ts": {
       "language": "typescript",
@@ -260,6 +361,7 @@
         "getGitBranchName": "(cwd: string): string | null",
         "getTaskMasterInProgress": "async (cwd: string): Promise<number | null>",
         "buildSummary": "(opts: { repoName: string | null; branch: string | null; cwd: string; taskCount: number | null; }): string",
+        "formatUptime": "(isoTimestamp: string): string",
         "resultPromise": "async (async (): Promise<number | null>"
       },
       "classes": {},
@@ -286,6 +388,15 @@
         "result",
         "hasGit",
         "prefix",
+        "connected",
+        "now",
+        "diffMs",
+        "totalSec",
+        "totalMin",
+        "hours",
+        "mins",
+        "days",
+        "remHours",
         "cmd",
         "health",
         "peers",
@@ -302,7 +413,16 @@
         "summary",
         "bytes",
         "newToken",
-        "pids"
+        "pids",
+        "subCmd",
+        "target",
+        "lastColon",
+        "host",
+        "port",
+        "remoteName",
+        "peerCount",
+        "status",
+        "uptime"
       ],
       "call_graph": {}
     },
@@ -312,7 +432,8 @@
       "imports": [
         "bun:sqlite",
         "crypto",
-        "node:fs"
+        "node:fs",
+        "./federation.ts"
       ],
       "functions": {
         "brokerLog": {
@@ -321,6 +442,7 @@
             "loadOrCreateToken",
             "rereadToken",
             "cleanDeliveredMessages",
+            "handleRegister",
             "handleBroadcast"
           ]
         },
@@ -337,7 +459,12 @@
           ],
           "signature": "(): string"
         },
-        "isValidToken": "(provided: string, expected: string): boolean",
+        "isValidToken": {
+          "signature": "(provided: string, expected: string): boolean",
+          "called_by": [
+            "handleFederationRequest"
+          ]
+        },
         "rereadToken": {
           "calls": [
             "brokerLog"
@@ -359,6 +486,7 @@
         },
         "handleRegister": {
           "calls": [
+            "brokerLog",
             "generateId"
           ],
           "signature": "(body: RegisterRequest): RegisterResponse"
@@ -369,20 +497,39 @@
         "handleListPeers": {
           "signature": "(body: ListPeersRequest): Peer[]",
           "called_by": [
-            "handleBroadcast"
+            "handleBroadcast",
+            "handleFederationRequest"
           ]
         },
         "handleSendMessage": "(body: SendMessageRequest): ",
         "handleBroadcast": {
           "calls": [
             "brokerLog",
+            "handleFederationSendToRemote",
             "handleListPeers"
           ],
-          "signature": "(body: BroadcastRequest): BroadcastResponse"
+          "signature": "async (body: BroadcastRequest): Promise<BroadcastResponse>"
         },
         "handlePollMessages": "(body: PollMessagesRequest): PollMessagesResponse",
         "handleAckMessages": "(body: AckMessagesRequest): void",
-        "handleUnregister": "(body: { id: string }): void"
+        "handleUnregister": "(body: { id: string }): void",
+        "handleFederationStatus": "(): FederationStatusResponse",
+        "handleFederationConnect": "async (body: FederationConnectRequest): Promise<",
+        "handleFederationDisconnect": "(body: { host: string; port: number }): ",
+        "handleFederationSendToRemote": {
+          "signature": "async (body: { to_id: string; from_id: string; text: string; type?: string; metadata?: Record<string, unknown>; reply_to?: number; }): Promise<",
+          "called_by": [
+            "handleBroadcast"
+          ]
+        },
+        "syncRemotePeers": "async (): Promise<void>",
+        "handleFederationRequest": {
+          "calls": [
+            "handleListPeers",
+            "isValidToken"
+          ],
+          "signature": "async (req: Request, server: any): Promise<Response>"
+        }
       },
       "classes": {},
       "constants": {
@@ -390,6 +537,10 @@
         "DB_PATH": "value",
         "LOG_DIR": "value",
         "TOKEN_PATH": "value",
+        "FEDERATION_ENABLED": "value",
+        "FEDERATION_PORT": "value",
+        "FEDERATION_SYNC_INTERVAL_MS": "value",
+        "FEDERATION_STALE_TIMEOUT_MS": "value",
         "VALID_MESSAGE_TYPES": "value"
       },
       "variables": [
@@ -420,14 +571,23 @@
         "now",
         "sessionName",
         "summary",
-        "existing",
+        "existingByPid",
+        "existingByTty",
+        "asPeer",
         "type",
         "totalSize",
         "referenced",
         "target",
+        "localPeers",
+        "remotePeers",
         "insertAll",
+        "relayPromises",
+        "totalRecipients",
         "rows",
         "rateLimits",
+        "remoteMachines",
+        "federationSubnet",
+        "federationHostname",
         "url",
         "path",
         "authHeader",
@@ -435,7 +595,31 @@
         "ip",
         "limit",
         "body",
-        "msg"
+        "msg",
+        "totalRemotePeers",
+        "key",
+        "handshakeResult",
+        "errMsg",
+        "peersResult",
+        "peersData",
+        "rm",
+        "colonIdx",
+        "targetHostname",
+        "signature",
+        "resp",
+        "data",
+        "lastSyncAge",
+        "socketAddr",
+        "remoteIp",
+        "cleanIp",
+        "psk",
+        "hsReq",
+        "relayReq",
+        "isRemoteFrom",
+        "msgType",
+        "metadataStr",
+        "configuredSubnet",
+        "federationSyncTimer"
       ],
       "call_graph": {}
     },
@@ -543,7 +727,15 @@
         "targetRes",
         "target",
         "got429",
-        "results"
+        "results",
+        "res1",
+        "oldPeer",
+        "newPeer",
+        "sharedTty",
+        "ttyPeers",
+        "tty",
+        "oldId",
+        "newId"
       ],
       "call_graph": {}
     },
@@ -618,6 +810,7 @@
         "main": {
           "calls": [
             "brokerFetch",
+            "cleanup",
             "ensureBroker",
             "getGitRoot",
             "getTty",
@@ -636,7 +829,10 @@
             "brokerFetch",
             "log"
           ],
-          "signature": "async ()"
+          "signature": "async ()",
+          "called_by": [
+            "main"
+          ]
         }
       },
       "classes": {},
@@ -669,11 +865,13 @@
         "peers",
         "lines",
         "parts",
-        "result",
+        "isRemotePeer",
         "timestamp",
+        "msgIdTag",
         "logPath",
         "entry",
         "preview",
+        "result",
         "prefix",
         "fromSummary",
         "fromCwd",
@@ -692,7 +890,105 @@
         "reg",
         "pollTimer",
         "heartbeatTimer",
+        "parentCheckTimer",
         "cleanup"
+      ],
+      "call_graph": {}
+    },
+    "federation.test.ts": {
+      "language": "typescript",
+      "parsed": true,
+      "purpose": "Test file",
+      "imports": [
+        "bun:test",
+        "node:fs",
+        "./federation.ts",
+        "node:crypto"
+      ],
+      "functions": {
+        "brokerPost": {
+          "signature": "async (path: string, body: Record<string, unknown> = {}): Promise<Response>",
+          "called_by": [
+            "registerPeer"
+          ]
+        },
+        "brokerPostNoAuth": "async (path: string, body: Record<string, unknown> = {}): Promise<Response>",
+        "curlFederationPost": "async (path: string, body: Record<string, unknown> = {}, headers: Record<string, string> = {},): Promise<",
+        "curlFederationGet": "async (path: string,): Promise<",
+        "registerPeer": {
+          "calls": [
+            "brokerPost"
+          ],
+          "signature": "async (overrides: Record<string, unknown> = {}): Promise<string>"
+        }
+      },
+      "classes": {},
+      "constants": {
+        "TEST_BROKER_PORT": "number",
+        "TEST_FEDERATION_PORT": "number",
+        "TEST_DB": "str",
+        "TEST_TOKEN_PATH": "str",
+        "TEST_CERT_PATH": "str",
+        "TEST_KEY_PATH": "str",
+        "BROKER_BASE": "str",
+        "FEDERATION_BASE": "str",
+        "TEST_PSK": "str"
+      },
+      "variables": [
+        "args",
+        "proc",
+        "output",
+        "statusMarker",
+        "markerIdx",
+        "jsonStr",
+        "status",
+        "res",
+        "data",
+        "p1",
+        "p2",
+        "p",
+        "brokerReady",
+        "i",
+        "federationReady",
+        "noFedDB",
+        "noFedTokenPath",
+        "noFedPort",
+        "noFedProc",
+        "ready",
+        "r",
+        "statusRes",
+        "statusData",
+        "connectRes",
+        "connectData",
+        "wrongPsk",
+        "peerId",
+        "peers",
+        "found",
+        "localPeerId",
+        "signature",
+        "pollRes",
+        "pollData",
+        "relayed",
+        "badSignature",
+        "remoteHostname",
+        "originalId",
+        "prefixedId",
+        "colonIdx",
+        "noAuthRes",
+        "authRes",
+        "healthRes",
+        "healthData",
+        "body",
+        "sig1",
+        "sig2",
+        "sig",
+        "body1",
+        "body2",
+        "bodyDiffMeta",
+        "bodyEmptyMeta",
+        "manualCanonical",
+        "expected",
+        "h"
       ],
       "call_graph": {}
     },
@@ -846,10 +1142,9 @@
       },
       "classes": {},
       "variables": [
-        "apiKey",
-        "parts",
-        "res",
-        "data",
+        "dir",
+        "projectName",
+        "fileList",
         "proc",
         "text",
         "code",
@@ -906,17 +1201,225 @@
       "language": "json",
       "parsed": false
     },
-    "../../../../tmp/test5-wsl2.ts": {
+    "src/server.ts": {
+      "language": "typescript",
+      "parsed": true,
+      "functions": {
+        "brokerFetch": "async (path: string, body: unknown): Promise<T>",
+        "isBrokerAlive": "async (): Promise<boolean>",
+        "ensureBroker": {
+          "calls": [
+            "isBrokerAlive",
+            "log"
+          ],
+          "signature": "async (): Promise<void>"
+        },
+        "log": "(msg: string)",
+        "getGitRoot": "async (cwd: string): Promise<string | null>",
+        "getTty": "(): string | null",
+        "pollAndPushMessages": {
+          "calls": [
+            "brokerFetch",
+            "log"
+          ],
+          "signature": "async ()"
+        },
+        "main": {
+          "calls": [
+            "brokerFetch",
+            "cleanup",
+            "ensureBroker",
+            "getGitRoot",
+            "getTty",
+            "log"
+          ],
+          "signature": "async ()"
+        },
+        "summaryPromise": {
+          "calls": [
+            "log"
+          ],
+          "signature": "async (async ()"
+        },
+        "cleanup": {
+          "calls": [
+            "brokerFetch",
+            "log"
+          ],
+          "signature": "async ()"
+        }
+      },
+      "classes": {},
+      "updated_by_hook": true,
+      "updated_at": "2026-03-25T10:55:13.338950"
+    },
+    "src/broker.ts": {
+      "language": "typescript",
+      "parsed": true,
+      "functions": {
+        "brokerLog": "(msg: string)",
+        "generateToken": "(): string",
+        "loadOrCreateToken": {
+          "calls": [
+            "brokerLog",
+            "generateToken"
+          ],
+          "signature": "(): string"
+        },
+        "isValidToken": "(provided: string, expected: string): boolean",
+        "rereadToken": {
+          "calls": [
+            "brokerLog"
+          ],
+          "signature": "(): void"
+        },
+        "cleanStalePeers": "()",
+        "cleanDeliveredMessages": {
+          "calls": [
+            "brokerLog"
+          ],
+          "signature": "()"
+        },
+        "generateId": "(): string",
+        "handleRegister": {
+          "calls": [
+            "brokerLog",
+            "generateId"
+          ],
+          "signature": "(body: RegisterRequest): RegisterResponse"
+        },
+        "handleHeartbeat": "(body: HeartbeatRequest): void",
+        "handleSetSummary": "(body: SetSummaryRequest): void",
+        "handleSetName": "(body: SetNameRequest): void",
+        "handleListPeers": "(body: ListPeersRequest): Peer[]",
+        "handleSendMessage": "(body: SendMessageRequest): ",
+        "handleBroadcast": {
+          "calls": [
+            "brokerLog",
+            "handleFederationSendToRemote",
+            "handleListPeers"
+          ],
+          "signature": "async (body: BroadcastRequest): Promise<BroadcastResponse>"
+        },
+        "handlePollMessages": "(body: PollMessagesRequest): PollMessagesResponse",
+        "handleAckMessages": "(body: AckMessagesRequest): void",
+        "handleUnregister": "(body: { id: string }): void",
+        "handleFederationStatus": "(): FederationStatusResponse",
+        "handleFederationConnect": "async (body: FederationConnectRequest): Promise<",
+        "handleFederationDisconnect": "(body: { host: string; port: number }): ",
+        "handleFederationSendToRemote": "async (body: { to_id: string; from_id: string; text: string; type?: string; metadata?: Record<string, unknown>; reply_to?: number; }): Promise<",
+        "syncRemotePeers": "async (): Promise<void>",
+        "handleFederationRequest": {
+          "calls": [
+            "handleListPeers",
+            "isValidToken"
+          ],
+          "signature": "async (req: Request, server: any): Promise<Response>"
+        }
+      },
+      "classes": {},
+      "updated_by_hook": true,
+      "updated_at": "2026-03-25T10:41:57.151725"
+    },
+    "tests/cli.test.ts": {
+      "language": "typescript",
+      "parsed": true,
+      "functions": {
+        "testEnv": "(): Record<string, string>",
+        "post": "async (path: string, body: Record<string, unknown> = {}): Promise<Response>",
+        "registerPeer": {
+          "calls": [
+            "post"
+          ],
+          "signature": "async (overrides: Record<string, unknown> = {}): Promise<string>"
+        },
+        "runCli": "async (args: string[], opts: { cwd?: string } = {}): Promise<"
+      },
+      "classes": {},
+      "updated_by_hook": true,
+      "updated_at": "2026-03-25T10:52:29.584676",
+      "purpose": "Test file"
+    },
+    "tests/federation.test.ts": {
+      "language": "typescript",
+      "parsed": true,
+      "functions": {
+        "brokerPost": "async (path: string, body: Record<string, unknown> = {}): Promise<Response>",
+        "brokerPostNoAuth": "async (path: string, body: Record<string, unknown> = {}): Promise<Response>",
+        "curlFederationPost": "async (path: string, body: Record<string, unknown> = {}, headers: Record<string, string> = {},): Promise<",
+        "curlFederationGet": "async (path: string,): Promise<",
+        "registerPeer": {
+          "calls": [
+            "brokerPost"
+          ],
+          "signature": "async (overrides: Record<string, unknown> = {}): Promise<string>"
+        }
+      },
+      "classes": {},
+      "updated_by_hook": true,
+      "updated_at": "2026-03-25T10:53:21.263072",
+      "purpose": "Test file"
+    },
+    "tests/broker.test.ts": {
+      "language": "typescript",
+      "parsed": true,
+      "functions": {
+        "post": "async (path: string, body: Record<string, unknown> = {}): Promise<Response>",
+        "postNoAuth": "async (path: string, body: Record<string, unknown> = {}): Promise<Response>",
+        "postWithToken": "async (path: string, token: string, body: Record<string, unknown> = {}): Promise<Response>",
+        "registerPeer": {
+          "calls": [
+            "post"
+          ],
+          "signature": "async (overrides: Record<string, unknown> = {}): Promise<string>"
+        }
+      },
+      "classes": {},
+      "updated_by_hook": true,
+      "updated_at": "2026-03-25T10:52:35.966473",
+      "purpose": "Test file"
+    },
+    "tests/server.test.ts": {
+      "language": "typescript",
+      "parsed": true,
+      "functions": {
+        "post": "async (path: string, body: Record<string, unknown> = {})",
+        "registerHelperPeer": {
+          "calls": [
+            "post"
+          ],
+          "signature": "async (overrides: Record<string, unknown> = {}): Promise<string>"
+        },
+        "resultText": "(result: Awaited<ReturnType<typeof client.callTool>>): string",
+        "getServerPeerId": {
+          "calls": [
+            "post"
+          ],
+          "signature": "async (): Promise<string>"
+        }
+      },
+      "classes": {},
+      "updated_by_hook": true,
+      "updated_at": "2026-03-25T10:52:54.769978",
+      "purpose": "Test file"
+    },
+    "src/index.ts": {
       "language": "typescript",
       "parsed": false,
       "functions": {},
       "classes": {},
       "updated_by_hook": true,
-      "updated_at": "2026-03-24T17:22:03.342699",
-      "purpose": "Test file"
+      "updated_at": "2026-03-25T10:55:52.616575",
+      "purpose": "Application entry point"
     }
   },
   "dependency_graph": {
+    "federation.ts": [
+      "bun",
+      "node:fs",
+      "node:os",
+      "node:crypto"
+    ],
     "cli.ts": [
       "node:path",
       "node:fs",
@@ -925,7 +1428,8 @@
     "broker.ts": [
       "bun:sqlite",
       "crypto",
-      "node:fs"
+      "node:fs",
+      "federation.ts"
     ],
     "broker.test.ts": [
       "bun:test",
@@ -937,6 +1441,12 @@
       "@modelcontextprotocol/sdk/types.js",
       "shared/summarize.ts",
       "shared/token.ts"
+    ],
+    "federation.test.ts": [
+      "bun:test",
+      "node:fs",
+      "federation.ts",
+      "node:crypto"
     ],
     "cli.test.ts": [
       "bun:test",
@@ -954,5 +1464,5 @@
       "node:fs"
     ]
   },
-  "staleness_check": 1773781204.543356
+  "staleness_check": 1773844605.007886
 }

@@ -87,7 +87,7 @@ beforeAll(async () => {
   fs.writeFileSync(TEST_TOKEN_PATH, TEST_TOKEN, { mode: 0o600 });
 
   // 2. Start broker on test port
-  brokerProcess = Bun.spawn(["bun", "broker.ts"], {
+  brokerProcess = Bun.spawn(["bun", "src/broker.ts"], {
     cwd: PROJECT_DIR,
     env: {
       ...process.env,
@@ -114,7 +114,7 @@ beforeAll(async () => {
   // 5. Create MCP client connected to server.ts via stdio
   transport = new StdioClientTransport({
     command: "bun",
-    args: ["server.ts"],
+    args: ["src/server.ts"],
     cwd: PROJECT_DIR,
     env: {
       ...process.env,
