@@ -1,22 +1,45 @@
 # claude-peers-mcp
 
-Private fork of [louislva/claude-peers-mcp](https://github.com/louislva/claude-peers-mcp). Peer discovery and messaging MCP channel for Claude Code instances.
+Peer discovery and messaging MCP for Claude Code instances. Supports LAN federation for cross-machine collaboration.
+
+## Project Structure
+
+```
+src/                    # Source code
+  broker.ts             # Singleton HTTP daemon (localhost:7899) + SQLite + federation TLS server
+  server.ts             # MCP stdio server (one per Claude Code instance) + channel push
+  cli.ts                # CLI utility for inspecting/managing broker state
+  federation.ts         # TLS cert gen, HMAC signing, subnet utils, curl-based TLS fetch
+  index.ts              # Entry point
+  shared/
+    types.ts            # All TypeScript interfaces
+    token.ts            # Shared token file reader for auth
+    summarize.ts        # Deterministic git-based auto-summary (no external APIs)
+tests/                  # Test suites (100 tests, 302 assertions)
+  broker.test.ts        # Broker + federation endpoint tests (43 tests)
+  cli.test.ts           # CLI + auto-summary tests (17 tests)
+  server.test.ts        # MCP server integration tests (18 tests)
+  federation.test.ts    # Federation TLS/PSK/HMAC/subnet tests (22 tests)
+docs/                   # Documentation
+  TROUBLESHOOTING.md    # Diagnostic guide
+cpm-logs/               # Runtime logs (gitignored)
+tasks/                  # PRDs and Ralph prd.json files
+```
 
 ## Architecture
 
-- `broker.ts` — Singleton HTTP daemon on localhost:7899 + SQLite (`~/.claude-peers.db`). Auto-launched by the MCP server.
-- `server.ts` — MCP stdio server, one per Claude Code instance. Connects to broker, exposes tools, pushes channel notifications.
-- `shared/types.ts` — Shared TypeScript types for broker API.
-- `shared/summarize.ts` — Auto-summary generation via OpenAI gpt-5.4-nano (requires OPENAI_API_KEY, falls back gracefully).
-- `cli.ts` — CLI utility for inspecting broker state.
+- **broker.ts** and **server.ts** are **SEPARATE PROCESSES**. server.ts spawns broker.ts via `Bun.spawn()`. They communicate via HTTP to localhost:7899.
+- The **federation TLS server** runs **in-process** with broker.ts (second `Bun.serve()` on port 7900). So broker.ts CAN access federation state directly, but server.ts and cli.ts CANNOT — they use HTTP endpoints.
+- **LAN-facing** federation endpoints use PSK auth (`X-Claude-Peers-PSK` header)
+- **Local-facing** endpoints (server.ts, cli.ts) use bearer token auth (`Authorization: Bearer`)
 
 ## MCP Tools
 
 | Tool | Description |
 |------|-------------|
-| `list_peers(scope)` | Discover peers. Scope: machine/directory/repo |
-| `send_message(to_id, text, type?, metadata?, reply_to?)` | Send message to peer by ID. Optional type (text/query/response/handoff/broadcast), metadata (JSON object), reply_to (message ID for threading) |
-| `broadcast_message(message, scope)` | Send message to all peers in scope (machine/directory/repo) |
+| `list_peers(scope)` | Discover peers. Scope: machine/directory/repo/lan |
+| `send_message(to_id, text, type?, metadata?, reply_to?)` | Send message to peer. Remote peers use `hostname:peer_id` format |
+| `broadcast_message(message, scope)` | Send to all peers in scope (machine/directory/repo/lan) |
 | `set_name(name)` | Set session name (from /rename) |
 | `set_summary(summary)` | Set work summary visible to peers |
 | `check_messages()` | Manual message poll (fallback — channel push is primary) |
@@ -25,89 +48,52 @@ Private fork of [louislva/claude-peers-mcp](https://github.com/louislva/claude-p
 
 ```bash
 # ZSH wrapper auto-includes --dangerously-load-development-channels flag.
-# Just run claude normally — channel push is automatic.
 claude
 
 # CLI:
-bun cli.ts status          # broker status + all peers
-bun cli.ts peers           # list peers
-bun cli.ts send <id> <msg> # send message
-bun cli.ts kill-broker     # stop broker daemon
+bun src/cli.ts status              # broker status + all peers
+bun src/cli.ts peers               # list peers
+bun src/cli.ts send <id> <msg>     # send message
+bun src/cli.ts kill-broker         # stop broker daemon
+bun src/cli.ts federation status   # federation state
+bun src/cli.ts federation connect <host>:<port>  # connect to remote
 ```
 
 ## Observability
 
-All CPM logs are in `cpm-logs/` (gitignored, log prefixes: `[CPM-broker]`, `[CPM-server]`):
-
-- **`cpm-logs/messages.log`**: All sent and received messages with timestamps, sender names, message IDs
-- **`cpm-logs/broker.log`**: Broker lifecycle — startup, peer cleanup, message cleanup, rate limiting
-- **`cpm-logs/server.log`**: MCP server — registration, polling, connection events, errors
-- **stderr**: Also echoed to stderr (visible in Claude Code MCP logs)
-- **CLI**: `bun cli.ts status` shows registered peers with [SESSION_NAME] tags
-- **Monitor all**: `tail -f cpm-logs/*.log`
+Logs in `cpm-logs/` (gitignored): `messages.log`, `broker.log`, `server.log`, `federation.log`
+- Monitor: `tail -f cpm-logs/*.log`
+- CLI: `bun src/cli.ts status`
 
 ## Bun
 
-Default to using Bun instead of Node.js.
+Default to Bun, not Node.js.
+- `Bun.serve()` for HTTP, `bun:sqlite` for SQLite, `Bun.file` for file I/O
+- `bun test` for tests, `bun install` for deps
+- Bun auto-loads .env — don't use dotenv
 
-- Use `bun <file>` instead of `node <file>` or `ts-node <file>`
-- Use `bun test` instead of `jest` or `vitest`
-- Use `bun install` instead of `npm install`
-- Use `bunx <package>` instead of `npx <package>`
-- Bun automatically loads .env, so don't use dotenv.
+## Testing
 
-### APIs
-
-- `Bun.serve()` for HTTP. Don't use `express`.
-- `bun:sqlite` for SQLite. Don't use `better-sqlite3`.
-- Prefer `Bun.file` over `node:fs` readFile/writeFile.
-- `WebSocket` is built-in. Don't use `ws`.
-
-### Testing
-
-Use `bun test` to run tests. Test files: `*.test.ts`.
-
-## Fork Divergence from Upstream
-
-| Feature | Status | Commit |
-|---------|--------|--------|
-| session_name field in peers table | Done | `6b8ec50` |
-| set_name MCP tool | Done | `6b8ec50` |
-| Schema migration (ALTER TABLE) for existing DBs | Done | `6b8ec50` |
-| from_name in channel push meta | Done | `6b8ec50` |
-| [SESSION_NAME] tag in CLI output | Done | `6b8ec50` |
-| Full message logging (stderr + file) | Done | `c995316` |
-| Message cleanup (delivered + 7 days) | Done | `c54dd1a` |
-| Message size limit (10KB max) | Done | `c54dd1a` |
-| Rate limiting (60 req/min per IP) | Done | `c54dd1a` |
-| CLI set-name command | Done | `c54dd1a` |
-| Broker test suite (20 tests) | Done | `cca5691`, `de82a12` |
-| README rewrite for fork | Done | `cca5691` |
-| Rate limit map cleanup (60s interval) | Done | `e7515e0` |
-| O(1) log file append | Done | `e7515e0` |
-| Two-phase delivery (poll + ack) | Done | `de82a12` |
-| PID liveness check on send | Done | `de82a12` |
-| Message ID returned on send | Done | `de82a12` |
-| ZSH wrapper for auto-channel-push | Done (in ~/.zshrc) | N/A |
-| Bearer token auth on all POST endpoints | Done | `8d52439` |
-| Structured messages (type/metadata/reply_to) | Done | `133d09e` |
-| Broadcast endpoint (/broadcast) | Done | `133d09e` |
-| broadcast_message MCP tool | Done | `133d09e` |
-| CLI broadcast command | Done | `133d09e` |
-
-**Sync policy**: Monthly `git fetch upstream`, cherry-pick selectively. Upstream has 8 open PRs to watch.
+```bash
+bun test                    # All 100 tests
+bun test tests/broker.test.ts    # Broker only
+bun test tests/federation.test.ts # Federation only
+```
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `FYI.md` | Decision journal and backlog |
+| `CHANGELOG.md` | Version history |
+| `FYI.md` | Decision journal |
 | `CLAUDE.md` | This file — project instructions |
-| `broker.test.ts` | Broker test suite (40 tests) |
-| `cli.test.ts` | CLI + auto-summary test suite (17 tests) |
-| `server.test.ts` | MCP server integration tests (18 tests) |
-| `shared/types.ts` | All TypeScript interfaces |
-| `shared/token.ts` | Shared token file reader for auth |
-| `broker.ts` | HTTP server + SQLite + auth middleware |
-| `server.ts` | MCP server + channel push |
-| `cli.ts` | CLI utility + auto-summary command |
+| `src/broker.ts` | HTTP server + SQLite + federation TLS |
+| `src/server.ts` | MCP server + channel push |
+| `src/federation.ts` | TLS cert gen, HMAC, subnet, curl fetch |
+| `src/shared/types.ts` | All TypeScript interfaces |
+
+## Known Issues
+
+- **Bun 1.3.x fetch() + self-signed TLS**: `tls: { rejectUnauthorized: false }` doesn't work. Federation uses `curl -sk` subprocess workaround via `federationFetch()`.
+- **Channel notifications after /mcp reconnect**: `/mcp` reconnect restores tool access but may not re-establish channel subscriptions. Full session restart required for channel push.
+- **Zombie MCP servers**: Fixed in v0.3.0 with parent death detection + TTY-based eviction.
