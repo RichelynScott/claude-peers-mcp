@@ -36,7 +36,9 @@ export function getMachineHostname(): string {
 
 /**
  * Auto-generate self-signed TLS certificate if not already present.
- * Prefers Ed25519, falls back to RSA-2048 if Ed25519 fails.
+ * RSA-2048 preferred for maximum compatibility across TLS libraries.
+ * Ed25519 certs cause handshake failures with macOS LibreSSL.
+ * Falls back to Ed25519 only if RSA generation fails (unlikely).
  */
 export async function ensureTlsCert(
   certPath: string = process.env.CLAUDE_PEERS_FEDERATION_CERT || DEFAULT_CERT_PATH,
@@ -50,22 +52,22 @@ export async function ensureTlsCert(
   const cn = getMachineHostname();
   federationLog(`Generating self-signed TLS certificate (CN=${cn})...`);
 
-  // Try Ed25519 first (faster, modern)
+  // RSA-2048 first — works everywhere: macOS LibreSSL, Linux OpenSSL, Bun's BoringSSL
+  try {
+    await $`openssl req -newkey rsa:2048 -noenc -keyout ${keyPath} -x509 -days 365 -out ${certPath} -subj /CN=${cn}`.quiet();
+    chmodSync(keyPath, 0o600);
+    federationLog(`TLS cert generated (RSA-2048) at ${certPath}`);
+    return { certPath, keyPath };
+  } catch {
+    federationLog("RSA-2048 cert generation failed, falling back to Ed25519...");
+  }
+
+  // Fallback: Ed25519 (may not work with macOS LibreSSL clients)
   try {
     await $`openssl genpkey -algorithm Ed25519 -out ${keyPath}`.quiet();
     await $`openssl req -new -x509 -key ${keyPath} -out ${certPath} -days 365 -subj /CN=${cn}`.quiet();
     chmodSync(keyPath, 0o600);
     federationLog(`TLS cert generated (Ed25519) at ${certPath}`);
-    return { certPath, keyPath };
-  } catch {
-    federationLog("Ed25519 cert generation failed, falling back to RSA-2048...");
-  }
-
-  // Fallback: RSA-2048
-  try {
-    await $`openssl req -newkey rsa:2048 -noenc -keyout ${keyPath} -x509 -days 365 -out ${certPath} -subj /CN=${cn}`.quiet();
-    chmodSync(keyPath, 0o600);
-    federationLog(`TLS cert generated (RSA-2048) at ${certPath}`);
     return { certPath, keyPath };
   } catch (err) {
     throw new Error(`[CPM-federation] Failed to generate TLS certificate: ${err}`);

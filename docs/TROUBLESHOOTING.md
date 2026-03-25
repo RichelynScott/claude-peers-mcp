@@ -193,6 +193,21 @@ Add this to your `~/.zshrc` and restart the broker.
 
 **Fix for macOS/native Linux**: Auto-detection should work correctly. If not, set the env var manually.
 
+### Federation TLS Handshake Failure (macOS → WSL2/Linux)
+
+**Symptoms**: `curl: (35) SSL connect error` or `Handshake failed (0): unknown` when connecting from macOS to another machine.
+
+**Cause**: The remote machine generated an Ed25519 TLS certificate, which macOS LibreSSL doesn't support for TLS negotiation.
+
+**Fix**: Regenerate the cert on the remote machine:
+```bash
+rm ~/.claude-peers-federation.crt ~/.claude-peers-federation.key
+# Restart the broker — it auto-generates a new RSA-2048 cert
+bun src/cli.ts kill-broker
+```
+
+As of v0.3.0, new installations default to RSA-2048 for compatibility.
+
 ### Federation Connect Fails: "Handshake failed" or Connection Refused
 
 **Symptoms**: `bun src/cli.ts federation connect <ip>:7900` fails with handshake error or connection refused.

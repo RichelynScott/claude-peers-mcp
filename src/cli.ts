@@ -302,6 +302,16 @@ async function federationSetup(): Promise<void> {
 async function federationSetupWSL2(fedPort: number): Promise<void> {
   console.log("  4. Setting up Windows port forwarding...");
 
+  // WSL2 subnet must be 0.0.0.0/0 — port forwarding rewrites source IPs
+  console.log("");
+  console.log("     Note: On WSL2, subnet restriction is set to 0.0.0.0/0 (allow all)");
+  console.log("     because Windows port forwarding rewrites source IPs. Security is");
+  console.log("     provided by PSK authentication + TLS encryption.");
+  console.log("");
+  console.log("     Ensure your environment includes:");
+  console.log("       export CLAUDE_PEERS_FEDERATION_SUBNET=0.0.0.0/0");
+  console.log("");
+
   // Get WSL2 internal IP
   const wslIpProc = Bun.spawnSync(["hostname", "-I"], {
     stdout: "pipe",

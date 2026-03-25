@@ -1,5 +1,5 @@
 {
-  "indexed_at": "2026-03-25T10:36:44.871469",
+  "indexed_at": "2026-03-25T12:45:26.509462",
   "root": ".",
   "project_structure": {
     "type": "tree",
@@ -12,31 +12,16 @@
       "\u251c\u2500\u2500 cpm-logs/",
       "\u251c\u2500\u2500 docs/",
       "\u251c\u2500\u2500 logs/ (8 files)",
-      "\u251c\u2500\u2500 shared/ (3 files)",
+      "\u251c\u2500\u2500 src/ (8 files)",
+      "\u2502   \u2514\u2500\u2500 shared/ (3 files)",
       "\u251c\u2500\u2500 tasks/ (5 files)",
       "\u2502   \u2514\u2500\u2500 ralph/ (5 files)",
+      "\u251c\u2500\u2500 tests/ (4 files)",
       "\u251c\u2500\u2500 package.json",
       "\u2514\u2500\u2500 README.md"
     ]
   },
   "documentation_map": {
-    "TROUBLESHOOTING.md": {
-      "sections": [
-        "Troubleshooting \u2014 claude-peers-mcp",
-        "Quick Diagnostics",
-        "Is the broker running?",
-        "Who's connected?",
-        "Watch message traffic in real time",
-        "Watch broker events (startup, cleanup, errors)",
-        "Watch MCP server events (registration, polling, errors)",
-        "Watch everything at once",
-        "Log Files",
-        "Common Issues"
-      ],
-      "architecture_hints": [
-        "/tmp/check.js"
-      ]
-    },
     "README.md": {
       "sections": [
         "claude-peers-mcp",
@@ -47,8 +32,7 @@
         "2. Register the MCP server",
         "3. Run with channel push",
         "MCP Tools",
-        "CLI Commands",
-        "Observability"
+        "CLI Commands"
       ],
       "architecture_hints": []
     },
@@ -65,30 +49,47 @@
     "FYI.md": {
       "sections": [
         "FYI - claude-peers-mcp Decision Journal",
+        "2026-03-25 - Stale MCP server auto-cleanup",
+        "What: Added automatic detection and cleanup of zombie MCP server processes + CLI restart command",
+        "Why: After repo restructure (server.ts \u2192 src/server.ts), old MCP server processes kept running from the old path, stealing messages. Non-technical users had to manually kill PIDs \u2014 unacceptable for public release.",
+        "How: Three-layer fix: (1) server.ts startup scans /proc for stale processes running server.ts from different paths and kills them, (2) new `bun src/cli.ts restart` command kills broker + all MCP servers, (3) existing TTY-based eviction on registration. Root cause: MCP server processes are spawned as detached children that survive session restarts.",
+        "Impact: Non-technical users never need to investigate PIDs or kill processes manually. Messaging reliability greatly improved.",
         "2026-03-24 - LAN Federation Phase A: Implementation Complete",
         "What: Implemented all 13 user stories for LAN federation (manual mode) across 7 commits via 4 waves of parallel subagents",
         "Why: Enables Claude Code sessions on different machines on the same LAN to discover each other and exchange messages",
-        "How: 4 waves of worktree subagents (2-3 parallel per wave): Wave 1 (types + federation.ts), Wave 2 (broker endpoints + CLI), Wave 3 (peer sync + server.ts), Wave 4 (test suite). Key implementation: federation.ts (155 lines, cert gen + HMAC + subnet), broker.ts (+434 lines, TLS server + endpoints + remote peer map), server.ts (LAN scope + remote routing), cli.ts (federation connect/disconnect/status). Architecture: broker.ts runs federation TLS server in-process; server.ts and cli.ts communicate via HTTP endpoints.",
-        "Impact: 96 tests (21 federation + 75 existing), 290 assertions, all passing. 7 commits on branch `ralph/lan-federation-phase-a`. Ready for PAL codereview and PR.",
-        "Related: `fe21727`, `67494ce`, `0b15f69`, `0c20250`, `7030c59`, `6a6d73f`, `b6a57a4`",
-        "2026-03-24 - PAL Codereview: Critical process isolation fix",
-        "What: PAL codereview (Gemini 3.1 Pro) caught a critical architecture flaw in the prd.json \u2014 server.ts and broker.ts run as SEPARATE PROCESSES",
-        "Why: Bug Fix #2 from PAL consensus incorrectly assumed server.ts and broker.ts run in the same process. In reality, server.ts spawns broker.ts via Bun.spawn() (line 106). They communicate via HTTP only."
+        "How: 4 waves of worktree subagents (2-3 parallel per wave): Wave 1 (types + federation.ts), Wave 2 (broker endpoints + CLI), Wave 3 (peer sync + server.ts), Wave 4 (test suite). Key implementation: federation.ts (155 lines, cert gen + HMAC + subnet), broker.ts (+434 lines, TLS server + endpoints + remote peer map), server.ts (LAN scope + remote routing), cli.ts (federation connect/disconnect/status). Architecture: broker.ts runs federation TLS server in-process; server.ts and cli.ts communicate via HTTP endpoints."
       ],
       "architecture_hints": []
     },
     "CLAUDE.md": {
       "sections": [
         "claude-peers-mcp",
+        "Project Structure",
         "Architecture",
         "MCP Tools",
         "Running",
         "ZSH wrapper auto-includes --dangerously-load-development-channels flag.",
-        "Just run claude normally \u2014 channel push is automatic.",
         "CLI:",
         "Observability",
         "Bun",
-        "APIs"
+        "Testing"
+      ],
+      "architecture_hints": [
+        "I/O"
+      ]
+    },
+    "CHANGELOG.md": {
+      "sections": [
+        "Changelog",
+        "[Unreleased]",
+        "[0.3.0] - 2026-03-25",
+        "Added",
+        "Fixed",
+        "Removed",
+        "[0.2.0] - 2026-03-24",
+        "Added",
+        "Fixed",
+        "Changed"
       ],
       "architecture_hints": []
     },
@@ -225,208 +226,122 @@
       ],
       "architecture_hints": []
     },
-    "CHANGELOG.md": {
+    "docs/TROUBLESHOOTING.md": {
       "sections": [
-        "Changelog",
-        "[Unreleased]",
-        "[0.3.0] - 2026-03-25",
-        "Added",
-        "Fixed",
-        "Removed",
-        "[0.2.0] - 2026-03-24",
-        "Added",
-        "Fixed",
-        "Changed"
+        "Troubleshooting \u2014 claude-peers-mcp",
+        "Quick Diagnostics",
+        "Is the broker running?",
+        "Who's connected?",
+        "Watch message traffic in real time",
+        "Watch broker events (startup, cleanup, errors)",
+        "Watch MCP server events (registration, polling, errors)",
+        "Watch everything at once",
+        "Log Files",
+        "Common Issues"
       ],
       "architecture_hints": []
     }
   },
   "directory_purposes": {
+    "src": "Source code root directory",
+    "tests": "Test files and test utilities",
     "tasks": "Test files and test utilities",
+    "docs": "Project documentation",
     "tasks/ralph": "Test files and test utilities"
   },
   "stats": {
     "total_files": 21,
-    "total_directories": 48,
+    "total_directories": 50,
     "fully_parsed": {
       "typescript": 12
     },
     "listed_only": {
       "json": 9
     },
-    "markdown_files": 16
+    "markdown_files": 18
   },
   "files": {
     ".mcp.json": {
       "language": "json",
       "parsed": false
     },
-    "federation.ts": {
+    "PROJECT_INDEX.json": {
+      "language": "json",
+      "parsed": false
+    },
+    "package.json": {
+      "language": "json",
+      "parsed": false
+    },
+    "tsconfig.json": {
+      "language": "json",
+      "parsed": false,
+      "purpose": "Configuration"
+    },
+    "src/federation.ts": {
       "language": "typescript",
       "parsed": true,
-      "imports": [
-        "bun",
-        "node:fs",
-        "node:os",
-        "node:crypto"
-      ],
       "functions": {
         "federationLog": "(msg: string): void",
         "getMachineHostname": "(): string",
         "ensureTlsCert": "async (certPath: string = process.env.CLAUDE_PEERS_FEDERATION_CERT || DEFAULT_CERT_PATH, keyPath: string = process.env.CLAUDE_PEERS_FEDERATION_KEY || DEFAULT_KEY_PATH,): Promise<",
-        "signMessage": {
-          "signature": "(body: Record<string, unknown>, psk: string): string",
-          "called_by": [
-            "verifySignature"
-          ]
-        },
+        "signMessage": "(body: Record<string, unknown>, psk: string): string",
         "verifySignature": {
           "calls": [
             "signMessage"
           ],
           "signature": "(body: Record<string, unknown>, signature: string, psk: string): boolean"
         },
-        "ipToInt": {
-          "signature": "(ip: string): number",
-          "called_by": [
-            "ipInSubnet",
-            "detectSubnet"
-          ]
-        },
+        "ipToInt": "(ip: string): number",
         "ipInSubnet": {
           "calls": [
             "ipToInt"
           ],
           "signature": "(ip: string, cidr: string): boolean"
         },
+        "isWSL2": "(): boolean",
         "detectSubnet": {
           "calls": [
-            "ipToInt"
+            "federationLog",
+            "ipToInt",
+            "isWSL2"
           ],
           "signature": "async (): Promise<string>"
         },
         "federationFetch": "async (url: string, body: Record<string, unknown>, pskToken: string, timeoutMs: number = 5000): Promise<"
       },
       "classes": {},
-      "constants": {
-        "DEFAULT_CERT_PATH": "str",
-        "DEFAULT_KEY_PATH": "str"
-      },
-      "variables": [
-        "line",
-        "logDir",
-        "logPath",
-        "h",
-        "cn",
-        "expected",
-        "bits",
-        "mask",
-        "routeProc",
-        "routeText",
-        "devMatch",
-        "ifaceProc",
-        "ifaceText",
-        "inetMatch",
-        "ip",
-        "prefix",
-        "network",
-        "networkIp",
-        "ifaces",
-        "proc",
-        "output",
-        "lines",
-        "statusCode",
-        "responseBody"
-      ],
-      "call_graph": {}
+      "updated_by_hook": true,
+      "updated_at": "2026-03-25T12:45:40.281096"
     },
-    "cli.ts": {
+    "src/cli.ts": {
       "language": "typescript",
       "parsed": true,
-      "imports": [
-        "node:path",
-        "node:fs",
-        "./shared/token.ts"
-      ],
       "functions": {
-        "brokerFetch": {
-          "signature": "async (fetchPath: string, body?: unknown): Promise<T>",
-          "called_by": [
-            "pollAndPushMessages",
-            "main",
-            "cleanup"
-          ]
-        },
+        "brokerFetch": "async (fetchPath: string, body?: unknown): Promise<T>",
         "getGitRepoName": "(cwd: string): string | null",
         "getGitBranchName": "(cwd: string): string | null",
         "getTaskMasterInProgress": "async (cwd: string): Promise<number | null>",
         "buildSummary": "(opts: { repoName: string | null; branch: string | null; cwd: string; taskCount: number | null; }): string",
         "formatUptime": "(isoTimestamp: string): string",
+        "federationSetup": {
+          "calls": [
+            "federationSetupLinux",
+            "federationSetupMacOS",
+            "federationSetupWSL2"
+          ],
+          "signature": "async (): Promise<void>"
+        },
+        "federationSetupWSL2": "async (fedPort: number): Promise<void>",
+        "federationSetupMacOS": "async (fedPort: number): Promise<void>",
+        "federationSetupLinux": "async (fedPort: number): Promise<void>",
         "resultPromise": "async (async (): Promise<number | null>"
       },
       "classes": {},
-      "constants": {
-        "BROKER_PORT": "value",
-        "BROKER_URL": "str"
-      },
-      "variables": [
-        "authToken",
-        "opts",
-        "res",
-        "proc",
-        "toplevel",
-        "branch",
-        "whichProc",
-        "timeoutPromise",
-        "resultPromise",
-        "text",
-        "code",
-        "trimmed",
-        "parsed",
-        "lines",
-        "l",
-        "result",
-        "hasGit",
-        "prefix",
-        "connected",
-        "now",
-        "diffMs",
-        "totalSec",
-        "totalMin",
-        "hours",
-        "mins",
-        "days",
-        "remHours",
-        "cmd",
-        "health",
-        "peers",
-        "nameTag",
-        "parts",
-        "toId",
-        "msg",
-        "scope",
-        "cwd",
-        "peerId",
-        "name",
-        "repoName",
-        "taskCount",
-        "summary",
-        "bytes",
-        "newToken",
-        "pids",
-        "subCmd",
-        "target",
-        "lastColon",
-        "host",
-        "port",
-        "remoteName",
-        "peerCount",
-        "status",
-        "uptime"
-      ],
-      "call_graph": {}
+      "updated_by_hook": true,
+      "updated_at": "2026-03-25T12:45:54.995477"
     },
-    "broker.ts": {
+    "src/broker.ts": {
       "language": "typescript",
       "parsed": true,
       "imports": [
@@ -623,127 +538,7 @@
       ],
       "call_graph": {}
     },
-    "PROJECT_INDEX.json": {
-      "language": "json",
-      "parsed": false
-    },
-    "broker.test.ts": {
-      "language": "typescript",
-      "parsed": true,
-      "purpose": "Test file",
-      "imports": [
-        "bun:test",
-        "node:fs"
-      ],
-      "functions": {
-        "post": {
-          "signature": "async (path: string, body: Record<string, unknown> = {}): Promise<Response>",
-          "called_by": [
-            "registerPeer",
-            "registerPeer",
-            "registerHelperPeer",
-            "getServerPeerId"
-          ]
-        },
-        "postNoAuth": "async (path: string, body: Record<string, unknown> = {}): Promise<Response>",
-        "postWithToken": "async (path: string, token: string, body: Record<string, unknown> = {}): Promise<Response>",
-        "registerPeer": {
-          "calls": [
-            "post"
-          ],
-          "signature": "async (overrides: Record<string, unknown> = {}): Promise<string>"
-        }
-      },
-      "classes": {},
-      "constants": {
-        "TEST_PORT": "number",
-        "TEST_DB": "str",
-        "TEST_TOKEN_PATH": "str",
-        "BASE": "str"
-      },
-      "variables": [
-        "res",
-        "data",
-        "bytes",
-        "ready",
-        "i",
-        "id1",
-        "id2",
-        "peers",
-        "matchingPids",
-        "before",
-        "peersBefore",
-        "peerBefore",
-        "body",
-        "after",
-        "peersAfter",
-        "peerAfter",
-        "listRes",
-        "peer",
-        "ids",
-        "tempId",
-        "found",
-        "messageIds",
-        "ackRes",
-        "ackData",
-        "res2",
-        "data2",
-        "poll",
-        "pollData",
-        "sendRes",
-        "sendData",
-        "pollRes",
-        "msg",
-        "metadata",
-        "sendA",
-        "dataA",
-        "sendB",
-        "dataB",
-        "replyMsg",
-        "pollRecv",
-        "pollRecvData",
-        "resB",
-        "resC",
-        "pollB",
-        "pollBData",
-        "msgB",
-        "pollC",
-        "pollCData",
-        "msgC",
-        "pollA",
-        "pollAData",
-        "msgA",
-        "resD",
-        "peerD",
-        "pollD",
-        "pollDData",
-        "msgD",
-        "resC2",
-        "resLonely",
-        "lonelyId",
-        "resC3",
-        "bigText",
-        "text",
-        "targetRes",
-        "target",
-        "got429",
-        "results",
-        "res1",
-        "oldPeer",
-        "newPeer",
-        "sharedTty",
-        "ttyPeers",
-        "tty",
-        "oldId",
-        "newId"
-      ],
-      "call_graph": {}
-    },
-    "package.json": {
-      "language": "json",
-      "parsed": false
-    },
-    "server.ts": {
+    "src/server.ts": {
       "language": "typescript",
       "parsed": true,
       "imports": [
@@ -890,19 +685,135 @@
         "reg",
         "pollTimer",
         "heartbeatTimer",
-        "parentCheckTimer",
         "cleanup"
       ],
       "call_graph": {}
     },
-    "federation.test.ts": {
+    "src/index.ts": {
+      "language": "typescript",
+      "parsed": false,
+      "purpose": "Application entry point"
+    },
+    "tests/broker.test.ts": {
+      "language": "typescript",
+      "parsed": true,
+      "purpose": "Test file",
+      "imports": [
+        "bun:test",
+        "node:fs"
+      ],
+      "functions": {
+        "post": {
+          "signature": "async (path: string, body: Record<string, unknown> = {}): Promise<Response>",
+          "called_by": [
+            "registerPeer",
+            "registerPeer",
+            "registerHelperPeer",
+            "getServerPeerId"
+          ]
+        },
+        "postNoAuth": "async (path: string, body: Record<string, unknown> = {}): Promise<Response>",
+        "postWithToken": "async (path: string, token: string, body: Record<string, unknown> = {}): Promise<Response>",
+        "registerPeer": {
+          "calls": [
+            "post"
+          ],
+          "signature": "async (overrides: Record<string, unknown> = {}): Promise<string>"
+        }
+      },
+      "classes": {},
+      "constants": {
+        "TEST_PORT": "number",
+        "TEST_DB": "str",
+        "TEST_TOKEN_PATH": "str",
+        "BASE": "str"
+      },
+      "variables": [
+        "res",
+        "data",
+        "bytes",
+        "ready",
+        "i",
+        "id1",
+        "id2",
+        "peers",
+        "matchingPids",
+        "before",
+        "peersBefore",
+        "peerBefore",
+        "body",
+        "after",
+        "peersAfter",
+        "peerAfter",
+        "listRes",
+        "peer",
+        "ids",
+        "tempId",
+        "found",
+        "messageIds",
+        "ackRes",
+        "ackData",
+        "res2",
+        "data2",
+        "poll",
+        "pollData",
+        "sendRes",
+        "sendData",
+        "pollRes",
+        "msg",
+        "metadata",
+        "sendA",
+        "dataA",
+        "sendB",
+        "dataB",
+        "replyMsg",
+        "pollRecv",
+        "pollRecvData",
+        "resB",
+        "resC",
+        "pollB",
+        "pollBData",
+        "msgB",
+        "pollC",
+        "pollCData",
+        "msgC",
+        "pollA",
+        "pollAData",
+        "msgA",
+        "resD",
+        "peerD",
+        "pollD",
+        "pollDData",
+        "msgD",
+        "resC2",
+        "resLonely",
+        "lonelyId",
+        "resC3",
+        "bigText",
+        "text",
+        "targetRes",
+        "target",
+        "got429",
+        "results",
+        "res1",
+        "oldPeer",
+        "newPeer",
+        "sharedTty",
+        "ttyPeers",
+        "tty",
+        "oldId",
+        "newId"
+      ],
+      "call_graph": {}
+    },
+    "tests/federation.test.ts": {
       "language": "typescript",
       "parsed": true,
       "purpose": "Test file",
       "imports": [
         "bun:test",
         "node:fs",
-        "./federation.ts",
+        "../src/federation.ts",
         "node:crypto"
       ],
       "functions": {
@@ -992,14 +903,14 @@
       ],
       "call_graph": {}
     },
-    "cli.test.ts": {
+    "tests/cli.test.ts": {
       "language": "typescript",
       "parsed": true,
       "purpose": "Test file",
       "imports": [
         "bun:test",
         "node:fs",
-        "./cli.ts"
+        "../src/cli.ts"
       ],
       "functions": {
         "testEnv": "(): Record<string, string>",
@@ -1045,12 +956,7 @@
       ],
       "call_graph": {}
     },
-    "index.ts": {
-      "language": "typescript",
-      "parsed": false,
-      "purpose": "Application entry point"
-    },
-    "server.test.ts": {
+    "tests/server.test.ts": {
       "language": "typescript",
       "parsed": true,
       "purpose": "Test file",
@@ -1127,12 +1033,7 @@
       ],
       "call_graph": {}
     },
-    "tsconfig.json": {
-      "language": "json",
-      "parsed": false,
-      "purpose": "Configuration"
-    },
-    "shared/summarize.ts": {
+    "src/shared/summarize.ts": {
       "language": "typescript",
       "parsed": true,
       "functions": {
@@ -1158,11 +1059,11 @@
       ],
       "call_graph": {}
     },
-    "shared/types.ts": {
+    "src/shared/types.ts": {
       "language": "typescript",
       "parsed": false
     },
-    "shared/token.ts": {
+    "src/shared/token.ts": {
       "language": "typescript",
       "parsed": true,
       "imports": [
@@ -1200,269 +1101,58 @@
     "tasks/ralph/prd-lan-discovery-phase-a.json": {
       "language": "json",
       "parsed": false
-    },
-    "src/server.ts": {
-      "language": "typescript",
-      "parsed": true,
-      "functions": {
-        "brokerFetch": "async (path: string, body: unknown): Promise<T>",
-        "isBrokerAlive": "async (): Promise<boolean>",
-        "ensureBroker": {
-          "calls": [
-            "isBrokerAlive",
-            "log"
-          ],
-          "signature": "async (): Promise<void>"
-        },
-        "log": "(msg: string)",
-        "getGitRoot": "async (cwd: string): Promise<string | null>",
-        "getTty": "(): string | null",
-        "pollAndPushMessages": {
-          "calls": [
-            "brokerFetch",
-            "log"
-          ],
-          "signature": "async ()"
-        },
-        "main": {
-          "calls": [
-            "brokerFetch",
-            "cleanup",
-            "ensureBroker",
-            "getGitRoot",
-            "getTty",
-            "log"
-          ],
-          "signature": "async ()"
-        },
-        "summaryPromise": {
-          "calls": [
-            "log"
-          ],
-          "signature": "async (async ()"
-        },
-        "cleanup": {
-          "calls": [
-            "brokerFetch",
-            "log"
-          ],
-          "signature": "async ()"
-        }
-      },
-      "classes": {},
-      "updated_by_hook": true,
-      "updated_at": "2026-03-25T10:55:13.338950"
-    },
-    "src/broker.ts": {
-      "language": "typescript",
-      "parsed": true,
-      "functions": {
-        "brokerLog": "(msg: string)",
-        "generateToken": "(): string",
-        "loadOrCreateToken": {
-          "calls": [
-            "brokerLog",
-            "generateToken"
-          ],
-          "signature": "(): string"
-        },
-        "isValidToken": "(provided: string, expected: string): boolean",
-        "rereadToken": {
-          "calls": [
-            "brokerLog"
-          ],
-          "signature": "(): void"
-        },
-        "cleanStalePeers": "()",
-        "cleanDeliveredMessages": {
-          "calls": [
-            "brokerLog"
-          ],
-          "signature": "()"
-        },
-        "generateId": "(): string",
-        "handleRegister": {
-          "calls": [
-            "brokerLog",
-            "generateId"
-          ],
-          "signature": "(body: RegisterRequest): RegisterResponse"
-        },
-        "handleHeartbeat": "(body: HeartbeatRequest): void",
-        "handleSetSummary": "(body: SetSummaryRequest): void",
-        "handleSetName": "(body: SetNameRequest): void",
-        "handleListPeers": "(body: ListPeersRequest): Peer[]",
-        "handleSendMessage": "(body: SendMessageRequest): ",
-        "handleBroadcast": {
-          "calls": [
-            "brokerLog",
-            "handleFederationSendToRemote",
-            "handleListPeers"
-          ],
-          "signature": "async (body: BroadcastRequest): Promise<BroadcastResponse>"
-        },
-        "handlePollMessages": "(body: PollMessagesRequest): PollMessagesResponse",
-        "handleAckMessages": "(body: AckMessagesRequest): void",
-        "handleUnregister": "(body: { id: string }): void",
-        "handleFederationStatus": "(): FederationStatusResponse",
-        "handleFederationConnect": "async (body: FederationConnectRequest): Promise<",
-        "handleFederationDisconnect": "(body: { host: string; port: number }): ",
-        "handleFederationSendToRemote": "async (body: { to_id: string; from_id: string; text: string; type?: string; metadata?: Record<string, unknown>; reply_to?: number; }): Promise<",
-        "syncRemotePeers": "async (): Promise<void>",
-        "handleFederationRequest": {
-          "calls": [
-            "handleListPeers",
-            "isValidToken"
-          ],
-          "signature": "async (req: Request, server: any): Promise<Response>"
-        }
-      },
-      "classes": {},
-      "updated_by_hook": true,
-      "updated_at": "2026-03-25T10:41:57.151725"
-    },
-    "tests/cli.test.ts": {
-      "language": "typescript",
-      "parsed": true,
-      "functions": {
-        "testEnv": "(): Record<string, string>",
-        "post": "async (path: string, body: Record<string, unknown> = {}): Promise<Response>",
-        "registerPeer": {
-          "calls": [
-            "post"
-          ],
-          "signature": "async (overrides: Record<string, unknown> = {}): Promise<string>"
-        },
-        "runCli": "async (args: string[], opts: { cwd?: string } = {}): Promise<"
-      },
-      "classes": {},
-      "updated_by_hook": true,
-      "updated_at": "2026-03-25T10:52:29.584676",
-      "purpose": "Test file"
-    },
-    "tests/federation.test.ts": {
-      "language": "typescript",
-      "parsed": true,
-      "functions": {
-        "brokerPost": "async (path: string, body: Record<string, unknown> = {}): Promise<Response>",
-        "brokerPostNoAuth": "async (path: string, body: Record<string, unknown> = {}): Promise<Response>",
-        "curlFederationPost": "async (path: string, body: Record<string, unknown> = {}, headers: Record<string, string> = {},): Promise<",
-        "curlFederationGet": "async (path: string,): Promise<",
-        "registerPeer": {
-          "calls": [
-            "brokerPost"
-          ],
-          "signature": "async (overrides: Record<string, unknown> = {}): Promise<string>"
-        }
-      },
-      "classes": {},
-      "updated_by_hook": true,
-      "updated_at": "2026-03-25T10:53:21.263072",
-      "purpose": "Test file"
-    },
-    "tests/broker.test.ts": {
-      "language": "typescript",
-      "parsed": true,
-      "functions": {
-        "post": "async (path: string, body: Record<string, unknown> = {}): Promise<Response>",
-        "postNoAuth": "async (path: string, body: Record<string, unknown> = {}): Promise<Response>",
-        "postWithToken": "async (path: string, token: string, body: Record<string, unknown> = {}): Promise<Response>",
-        "registerPeer": {
-          "calls": [
-            "post"
-          ],
-          "signature": "async (overrides: Record<string, unknown> = {}): Promise<string>"
-        }
-      },
-      "classes": {},
-      "updated_by_hook": true,
-      "updated_at": "2026-03-25T10:52:35.966473",
-      "purpose": "Test file"
-    },
-    "tests/server.test.ts": {
-      "language": "typescript",
-      "parsed": true,
-      "functions": {
-        "post": "async (path: string, body: Record<string, unknown> = {})",
-        "registerHelperPeer": {
-          "calls": [
-            "post"
-          ],
-          "signature": "async (overrides: Record<string, unknown> = {}): Promise<string>"
-        },
-        "resultText": "(result: Awaited<ReturnType<typeof client.callTool>>): string",
-        "getServerPeerId": {
-          "calls": [
-            "post"
-          ],
-          "signature": "async (): Promise<string>"
-        }
-      },
-      "classes": {},
-      "updated_by_hook": true,
-      "updated_at": "2026-03-25T10:52:54.769978",
-      "purpose": "Test file"
-    },
-    "src/index.ts": {
-      "language": "typescript",
-      "parsed": false,
-      "functions": {},
-      "classes": {},
-      "updated_by_hook": true,
-      "updated_at": "2026-03-25T10:55:52.616575",
-      "purpose": "Application entry point"
     }
   },
   "dependency_graph": {
-    "federation.ts": [
+    "src/federation.ts": [
       "bun",
       "node:fs",
       "node:os",
       "node:crypto"
     ],
-    "cli.ts": [
+    "src/cli.ts": [
       "node:path",
       "node:fs",
-      "shared/token.ts"
+      "src/shared/token.ts"
     ],
-    "broker.ts": [
+    "src/broker.ts": [
       "bun:sqlite",
       "crypto",
       "node:fs",
-      "federation.ts"
+      "src/federation.ts"
     ],
-    "broker.test.ts": [
-      "bun:test",
-      "node:fs"
-    ],
-    "server.ts": [
+    "src/server.ts": [
       "@modelcontextprotocol/sdk/server/index.js",
       "@modelcontextprotocol/sdk/server/stdio.js",
       "@modelcontextprotocol/sdk/types.js",
-      "shared/summarize.ts",
-      "shared/token.ts"
+      "src/shared/summarize.ts",
+      "src/shared/token.ts"
     ],
-    "federation.test.ts": [
+    "tests/broker.test.ts": [
+      "bun:test",
+      "node:fs"
+    ],
+    "tests/federation.test.ts": [
       "bun:test",
       "node:fs",
-      "federation.ts",
+      "src/federation.ts",
       "node:crypto"
     ],
-    "cli.test.ts": [
+    "tests/cli.test.ts": [
       "bun:test",
       "node:fs",
-      "cli.ts"
+      "src/cli.ts"
     ],
-    "server.test.ts": [
+    "tests/server.test.ts": [
       "bun:test",
       "@modelcontextprotocol/sdk/client/index.js",
       "@modelcontextprotocol/sdk/client/stdio.js",
       "node:fs",
       "node:crypto"
     ],
-    "shared/token.ts": [
+    "src/shared/token.ts": [
       "node:fs"
     ]
   },
-  "staleness_check": 1773844605.007886
+  "staleness_check": 1773852326.639793
 }
