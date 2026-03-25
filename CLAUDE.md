@@ -23,7 +23,7 @@ tests/                  # Test suites (100 tests, 302 assertions)
 docs/                   # Documentation
   TROUBLESHOOTING.md    # Diagnostic guide
 cpm-logs/               # Runtime logs (gitignored)
-tasks/                  # PRDs and Ralph prd.json files
+tasks/                  # PRDs and project planning files
 ```
 
 ## Architecture
@@ -42,7 +42,7 @@ tasks/                  # PRDs and Ralph prd.json files
 | `broadcast_message(message, scope)` | Send to all peers in scope (machine/directory/repo/lan) |
 | `set_name(name)` | Set session name (from /rename) |
 | `set_summary(summary)` | Set work summary visible to peers |
-| `check_messages()` | Manual message poll (fallback — channel push is primary) |
+| `check_messages()` | Diagnostic tool — without channel push, messages are auto-consumed by the MCP server before Claude sees them |
 
 ## Running
 

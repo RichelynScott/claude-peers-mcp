@@ -99,7 +99,7 @@ If a project-level `.mcp.json` defines claude-peers, it **overrides** the global
 
 **Cause**: The target peer's Claude Code process exited. The broker checks PID liveness before accepting messages.
 
-**Fix**: The target session needs to be restarted. If you believe the session IS running, the peer may have re-registered with a new ID after a broker restart. Run `bun cli.ts peers` to find the current ID.
+**Fix**: The target session needs to be restarted. If you believe the session IS running, the peer may have re-registered with a new ID after a broker restart. Run `bun src/cli.ts peers` to find the current ID.
 
 ### Broker won't start / EADDRINUSE
 
@@ -159,6 +159,7 @@ sqlite3 ~/.claude-peers.db "SELECT to_id, COUNT(*) as pending FROM messages WHER
 **Fix**: This is rare on modern systems. If it happens, manually unregister:
 ```bash
 curl -s -X POST http://127.0.0.1:7899/unregister \
+  -H "Authorization: Bearer $(cat ~/.claude-peers-token)" \
   -H 'Content-Type: application/json' \
   -d '{"id": "STALE_PEER_ID"}'
 ```
@@ -278,7 +279,7 @@ Claude Code Session A          Claude Code Session B
 |----------|---------|---------|
 | `CLAUDE_PEERS_PORT` | `7899` | Broker HTTP port |
 | `CLAUDE_PEERS_DB` | `~/.claude-peers.db` | SQLite database path |
-| `OPENAI_API_KEY` | (none) | Auto-summary via gpt-5.4-nano (optional) |
+
 
 ## SQLite Direct Access
 

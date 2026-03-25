@@ -769,7 +769,7 @@ async function main() {
   log(`Git root: ${myGitRoot ?? "(none)"}`);
   log(`TTY: ${tty ?? "(unknown)"}`);
 
-  // 3. Generate initial summary via gpt-5.4-nano (non-blocking, best-effort)
+  // 3. Generate initial summary via git-based auto-summary (non-blocking, best-effort)
   let initialSummary = "";
   const summaryPromise = (async () => {
     try {

@@ -35,8 +35,9 @@ bun install
 Register as a user-scoped MCP so it loads in every Claude Code session:
 
 ```bash
+# Run this from the claude-peers-mcp directory after cloning
 claude mcp add --scope user --transport stdio claude-peers \
-  -- bun /path/to/claude-peers-mcp/src/server.ts
+  -- bun $PWD/src/server.ts
 ```
 
 ### 3. Enable channel push (real-time message delivery)
@@ -124,7 +125,7 @@ These tools are available to Claude Code when the MCP server is running:
 | `broadcast_message` | `message`, `scope` | Send a message to all peers in the given scope (machine / directory / repo / lan). |
 | `set_name` | `name` | Set a human-readable session name (e.g., from `/rename`). Visible to peers in discovery. |
 | `set_summary` | `summary` | Set a work summary visible to peers. Convention: prefix with `[SessionName]`. |
-| `check_messages` | *(none)* | Manually poll for new messages. Fallback when channel push is unavailable. |
+| `check_messages` | *(none)* | Diagnostic tool for checking message state. Note: without channel push enabled, the MCP server auto-consumes messages before Claude can see them. See [Troubleshooting](docs/TROUBLESHOOTING.md). |
 
 ### Message types
 
