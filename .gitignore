@@ -47,3 +47,11 @@ PROJECT_INDEX.json
 
 # Archive
 archive/
+
+# Hook logs (Claude Code session data)
+logs/
+
+# Internal dev artifacts (PRDs, Ralph JSONs, decision journal)
+tasks/
+FYI.md
+HANDOFF.md
