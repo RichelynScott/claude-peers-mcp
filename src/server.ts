@@ -752,11 +752,18 @@ async function killStaleMcpServers(): Promise<void> {
         // cmdline is null-separated
         const args = cmdline.split("\0");
 
-        // Check if this process is running a DIFFERENT server.ts path
+        // Check if this process is running a DIFFERENT server.ts path.
+        // Use path.resolve() to normalize relative paths (e.g., "./src/server.ts")
+        // before comparison. Without this, relative vs absolute paths cause
+        // a murder-suicide loop where sessions kill each other on startup.
         const serverArg = args.find((a) => a.includes("server.ts"));
-        if (serverArg && !myServerPath.includes(serverArg) && !serverArg.includes(myServerPath)) {
-          log(`Killing stale MCP server PID ${pid} (running from old path: ${serverArg})`);
-          process.kill(pid, "SIGTERM");
+        if (serverArg) {
+          const resolvedArg = require("node:path").resolve(serverArg);
+          const resolvedMy = require("node:path").resolve(myServerPath);
+          if (resolvedArg !== resolvedMy) {
+            log(`Killing stale MCP server PID ${pid} (running from old path: ${serverArg})`);
+            process.kill(pid, "SIGTERM");
+          }
         }
       } catch {
         // Process may have already exited, ignore
