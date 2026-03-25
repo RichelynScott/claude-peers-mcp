@@ -63,6 +63,27 @@ ps aux | grep "bun.*server.ts" | grep -v grep
 
 **Prevention**: As of v0.3.0, server.ts automatically detects and kills stale MCP server processes on startup. If you still hit this issue, use `bun src/cli.ts restart`.
 
+### MCP Server Fails to Connect After Path Change or Update
+
+**Symptoms**: `/mcp` → "Failed to reconnect to claude-peers". The MCP server worked before but stopped after a code update, repo restructure, or config change.
+
+**Root cause**: Claude Code caches the MCP server config (command + args) in memory. `/mcp` reconnect uses the **cached** config, not the current file on disk. If you changed the server path in `.mcp.json` or `~/.claude.json`, `/mcp` reconnect will still try the OLD path.
+
+**Fix**: You must **fully restart the Claude Code session** — `/exit` then reopen. `/mcp` alone is not enough.
+
+**Also check**: There may be MULTIPLE `.mcp.json` files defining claude-peers:
+```bash
+# Find all config files referencing claude-peers
+find ~ -name ".mcp.json" -exec grep -l "claude-peers" {} \; 2>/dev/null
+
+# Common locations:
+# ~/.claude.json          — global config (all sessions)
+# ~/.claude/.mcp.json     — project config for sessions in ~/.claude/
+# <project>/.mcp.json     — project config for that repo
+```
+
+If a project-level `.mcp.json` defines claude-peers, it **overrides** the global config. Make sure ALL config files have the correct path. Also check for `"disabled": true` which silently prevents the server from starting.
+
 ### "Message sent" but recipient never received it (version mismatch)
 
 **Cause**: The broker or recipient's MCP server is running old code. The two-phase delivery system (`/poll-messages` + `/ack-messages`) requires both broker AND MCP server to be on the same version.
