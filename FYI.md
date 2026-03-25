@@ -49,7 +49,7 @@
 **SKIPPED:**
 - Gemini's derived LAN PSK (SHA256(token+"LAN_FEDERATION")) — elegant but adds complexity for minimal gain in trusted LAN scenario. Override env var is simpler.
 
-### Related: PAL continuation_id: `435275f0-6c9c-4add-9992-3d08e68f021b`
+### Related: (internal PAL session reference removed)
 
 ## 2026-03-24 - Deep Research: LAN Discovery Prerequisites
 ### What: Iterative recursive deep research (breadth 4, depth 2) on Bun TLS, WSL2 mDNS, bonjour-service compatibility, self-signed cert generation, and federated broker patterns
@@ -77,7 +77,7 @@
 ### Why: User wanted all backlog items addressed systematically with autonomous execution capability via Ralph
 ### How: PAL Planner (Grok 4.20 + Gemini 3.1 Pro) analyzed backlog → tiered items (Ralph vs direct subagent) → mapped dependency graph → phased PRD creation via parallel subagents → Ralph prd.json conversion. Key decisions: (1) bundled structured messages + broadcast into one PRD (broadcast IS a message type), (2) deferred server.test.ts until after auth + structured messages to avoid testing moving API, (3) split auto-summary into CLI (this repo) + hook (~/.claude/) due to cross-directory concern, (4) LAN discovery converted Phase A only (manual federation), (5) hcom bridge + clink dual-bus too small for Ralph → direct subagent tasks.
 ### Impact: 6 PRDs (2170+ lines total), 5 Ralph prd.json files (45 stories total), ready for phased autonomous execution. Workflow pattern documented and integrated into research-methodologies skill by ADD_MORE_2_CC session.
-### Related: `8f344b9` through `4b885be` (11 commits). PAL continuation_id: `0c4aa37b-6f43-4e16-bb9a-88265ae318a5`
+### Related: `8f344b9` through `4b885be` (11 commits)
 
 ## 2026-03-24 - Future: LAN cross-machine peer discovery
 ### What: Investigate enabling Claude Code sessions on different machines to communicate over the same local network
@@ -161,6 +161,4 @@
 | Bun-to-UV port evaluation | 2026-04-23 | Port ONLY if: (a) daily multi-session usage, (b) Bun causes friction, (c) team adoption expands. Otherwise accept Bun as permanent. |
 
 ### PAL MCP References
-- Consensus continuation_id: `27f8435a-f91f-446b-a122-966003ad0f65` (5 models)
-- Thinkdeep continuation_id: `0b8f06a3-4ef7-402b-94d7-150e0077f423` (Gemini 3.1 Pro)
-- Memory file: `~/.claude/projects/-home-riche--claude/memory/project_claude_peers_setup.md`
+- (internal session references removed for public release)

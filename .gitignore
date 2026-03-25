@@ -39,5 +39,11 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # CPM logs (broker, server, messages)
 cpm-logs/*.log
 
+# Firecrawl research reports
+.firecrawl/
+
+# Auto-generated project index
+PROJECT_INDEX.json
+
 # Archive
 archive/
