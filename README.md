@@ -1,79 +1,104 @@
 # claude-peers-mcp
 
-Peer discovery and messaging for Claude Code instances.
+Peer discovery and messaging for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) instances -- on the same machine or across your LAN.
 
-## Overview
+Multiple Claude Code sessions can find each other, exchange messages in real time, and coordinate work without any external services. Federation extends this across machines with TLS encryption and pre-shared key authentication.
 
-claude-peers-mcp lets multiple Claude Code sessions running on the same machine discover each other and exchange messages in real time. When one session needs information from another -- what files it's editing, what branch it's on, what task it's working on -- it can find and ask directly.
+**Key features:**
 
-This is a private fork of [louislva/claude-peers-mcp](https://github.com/louislva/claude-peers-mcp) with additional features: session naming, hardened broker (rate limiting, message size limits, message cleanup), full message observability, and an extended CLI.
+- **Peer discovery** -- find sessions by machine, directory, git repo, or LAN
+- **Real-time messaging** -- instant delivery via Claude Code channel push
+- **LAN federation** -- cross-machine collaboration with TLS + PSK + HMAC security
+- **Structured messages** -- types (text, query, response, handoff, broadcast), metadata, threading
+- **Broadcast** -- send to all peers in a given scope
+- **Auto-summary** -- git-based context summaries with zero external API calls
+- **CLI** -- inspect, message, and manage from your terminal
 
-## Architecture
+## What is MCP?
 
-```
-                 +--------------------------+
-                 |  Broker Daemon           |
-                 |  127.0.0.1:7899         |
-                 |  SQLite (~/.claude-      |
-                 |    peers.db)             |
-                 +------+-------------+----+
-                        |             |
-                   MCP Server A   MCP Server B
-                   (stdio)        (stdio)
-                        |             |
-                   Claude A       Claude B
-```
+[Model Context Protocol (MCP)](https://modelcontextprotocol.io/) is a standard for connecting AI assistants to external tools and data sources. claude-peers-mcp is an MCP server that gives Claude Code the ability to discover and communicate with other Claude Code sessions.
 
-There are three components:
+## Quick Start
 
-| Component | File | Description |
-|-----------|------|-------------|
-| **Broker** | `src/broker.ts` | Singleton HTTP daemon on `127.0.0.1:7899`. Manages peer registry and message routing in a SQLite database. Auto-launched by the first MCP server that starts. |
-| **MCP Server** | `src/server.ts` | One instance per Claude Code session, running as a stdio MCP server. Registers with the broker, exposes tools, polls for messages every second, and pushes them into the session via the `claude/channel` protocol. |
-| **CLI** | `src/cli.ts` | Command-line utility for inspecting broker state, listing peers, and sending messages from outside Claude Code. |
+### 1. Install
 
-Supporting files:
-
-| File | Purpose |
-|------|---------|
-| `src/shared/types.ts` | TypeScript interfaces for all broker API request/response types |
-| `src/shared/summarize.ts` | Auto-summary generation via OpenAI `gpt-5.4-nano` (optional, requires `OPENAI_API_KEY`) |
-
-## Setup
-
-### 1. Clone and install
+Requires [Bun](https://bun.sh) (v1.1+).
 
 ```bash
-git clone https://github.com/RichelynScott/claude-peers-mcp.git ~/MCPs/claude-peers-mcp
-cd ~/MCPs/claude-peers-mcp
+git clone https://github.com/RichelynScott/claude-peers-mcp.git
+cd claude-peers-mcp
 bun install
 ```
 
 ### 2. Register the MCP server
 
-Add to your user-scoped MCP configuration so it is available in every Claude Code session:
+Register as a user-scoped MCP so it loads in every Claude Code session:
 
 ```bash
-claude mcp add --scope user --transport stdio claude-peers -- bun ~/MCPs/claude-peers-mcp/src/server.ts
+claude mcp add --scope user --transport stdio claude-peers \
+  -- bun /path/to/claude-peers-mcp/src/server.ts
 ```
 
-### 3. Run with channel push
+### 3. Enable channel push
 
-Channel push enables instant message delivery into the Claude Code session. Without it, the tools still work, but messages must be polled manually via `check_messages`.
+Channel push delivers messages instantly into your Claude Code session. Without it, messages must be polled manually via `check_messages`.
 
 ```bash
 claude --dangerously-load-development-channels server:claude-peers
 ```
 
-**ZSH wrapper (recommended):** If you have a ZSH wrapper function for `claude`, it can auto-include the `--dangerously-load-development-channels server:claude-peers` flag so you do not need to type it every time. Add something like this to `~/.zshrc`:
+**Recommended:** Add a shell wrapper so the flag is always included:
 
 ```bash
+# Add to ~/.zshrc or ~/.bashrc
 function claude() {
   command claude --dangerously-load-development-channels server:claude-peers "$@"
 }
 ```
 
-The broker daemon starts automatically the first time an MCP server connects. No manual broker management is needed.
+### 4. Use it
+
+The broker daemon starts automatically when the first MCP server connects. Open two or more Claude Code sessions and they will discover each other.
+
+```
+You: "Who else is working in this repo?"
+Claude: [calls list_peers with scope "repo"]
+Claude: "There's one other session working on the auth module..."
+```
+
+## LAN Federation
+
+Federation lets claude-peers instances on different machines discover and message each other over your local network.
+
+### Setup wizard (recommended)
+
+The guided wizard detects your platform (WSL2, macOS, Linux) and walks you through firewall rules, port forwarding, and token sharing:
+
+```bash
+bun src/cli.ts federation setup
+```
+
+### Manual setup
+
+1. Enable federation in `~/.claude-peers-config.json`:
+
+```json
+{
+  "federation": {
+    "enabled": true,
+    "port": 7900,
+    "subnet": "192.168.1.0/24"
+  }
+}
+```
+
+2. Copy `~/.claude-peers-token` to each machine (both must share the same token).
+
+3. Restart: `bun src/cli.ts restart`
+
+4. Connect: `bun src/cli.ts federation connect <remote-ip>:7900`
+
+Once connected, `list_peers(scope="lan")` returns peers from all federated machines, and `send_message` works across machines using the `hostname:peer_id` format.
 
 ## MCP Tools
 
@@ -81,11 +106,24 @@ These tools are available to Claude Code when the MCP server is running:
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `list_peers` | `scope`: `"machine"` \| `"directory"` \| `"repo"` | Discover other Claude Code instances. Returns ID, session name, PID, working directory, git root, TTY, summary, and last-seen timestamp. |
-| `send_message` | `to_id`: string, `message`: string | Send a message to another instance by peer ID. Delivered instantly via channel push. |
-| `set_name` | `name`: string | Set a human-readable session name (typically from `/rename`). Visible to other peers in `list_peers` and included as `from_name` in channel push metadata. |
-| `set_summary` | `summary`: string | Set a 1-2 sentence description of current work. Visible to peers in `list_peers`. Convention: prefix with `[SessionName]`. |
-| `check_messages` | *(none)* | Manually poll for new messages. Fallback for when channel push is not available. |
+| `list_peers` | `scope`: machine / directory / repo / lan | Discover other Claude Code sessions. Returns ID, name, PID, working directory, git root, summary, and timestamps. |
+| `send_message` | `to_id`, `text`, `type?`, `metadata?`, `reply_to?` | Send a message to a peer. Remote peers use `hostname:peer_id` format. Supports threading via `reply_to`. |
+| `broadcast_message` | `message`, `scope` | Send a message to all peers in the given scope (machine / directory / repo / lan). |
+| `set_name` | `name` | Set a human-readable session name (e.g., from `/rename`). Visible to peers in discovery. |
+| `set_summary` | `summary` | Set a work summary visible to peers. Convention: prefix with `[SessionName]`. |
+| `check_messages` | *(none)* | Manually poll for new messages. Fallback when channel push is unavailable. |
+
+### Message types
+
+Messages carry a `type` field for semantic routing:
+
+| Type | Purpose |
+|------|---------|
+| `text` | General message (default) |
+| `query` | Asking a question -- expects a response |
+| `response` | Reply to a previous message |
+| `handoff` | Task delegation to another session |
+| `broadcast` | Group announcement |
 
 ## CLI Commands
 
@@ -93,190 +131,165 @@ Run from the project directory with `bun src/cli.ts <command>`:
 
 | Command | Description |
 |---------|-------------|
-| `status` | Show broker health, peer count, and detailed list of all registered peers with session names |
+| `status` | Broker health, peer count, and detailed peer list |
 | `peers` | List all registered peers (compact format) |
 | `send <id> <message>` | Send a message to a peer by ID |
-| `set-name <id> <name>` | Set a peer's session name from the command line |
+| `broadcast <scope> <message>` | Broadcast to all peers in scope |
+| `set-name <id> <name>` | Set a peer's session name |
+| `restart` | Kill broker + all MCP servers, restart cleanly |
 | `kill-broker` | Stop the broker daemon |
-| `restart` | Kill broker + all MCP server processes, then restart cleanly. Use after path changes or version upgrades. |
-| `federation setup` | Guided federation setup wizard (WSL2/macOS/Linux) |
+| `federation setup` | Guided setup wizard (WSL2 / macOS / Linux) |
 | `federation connect <host>:<port>` | Connect to a remote broker |
 | `federation disconnect <host>:<port>` | Disconnect from a remote broker |
 | `federation status` | Show federation state and connected remotes |
 
-Examples:
-
-```bash
-bun src/cli.ts status
-bun src/cli.ts peers
-bun src/cli.ts send abc12345 "What branch are you on?"
-bun src/cli.ts set-name abc12345 "MyAgent"
-bun src/cli.ts kill-broker
-bun src/cli.ts restart
-```
-
-## Federation Setup
-
-Federation allows claude-peers instances on different machines to discover and message each other over your LAN. The guided setup command handles environment detection, prerequisites, and platform-specific network configuration:
-
-```bash
-# Enable federation and run setup
-export CLAUDE_PEERS_FEDERATION_ENABLED=true
-bun src/cli.ts federation setup
-```
-
-The wizard detects your platform (WSL2, macOS, or Linux) and walks you through:
-- **WSL2**: Configures Windows port forwarding (`netsh portproxy`) and firewall rules via an elevated PowerShell prompt
-- **macOS**: Checks the application firewall and prints the allow command if needed
-- **Linux**: Detects LAN IP and prints firewall commands (UFW / firewalld)
-
-Both machines must share the same authentication token. The setup command prints `scp` instructions for copying `~/.claude-peers-token` to the remote machine.
-
-Once setup is complete on both machines, connect them:
-
-```bash
-bun src/cli.ts federation connect <remote-ip>:7900
-```
-
-Other federation CLI commands:
-
-| Command | Description |
-|---------|-------------|
-| `federation status` | Show federation state, connected remotes, and remote peer counts |
-| `federation connect <host>:<port>` | Connect to a remote broker |
-| `federation disconnect <host>:<port>` | Disconnect from a remote broker |
-| `federation setup` | Guided setup wizard (WSL2/macOS/Linux) |
-
-For troubleshooting, see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
-
-## Observability
-
-### stderr logging
-
-The MCP server logs full message content to stderr with no truncation. This is visible in Claude Code's MCP log output. Both sent and received messages are logged with timestamps and sender identification.
-
-### Persistent log file
-
-All sent and received messages are appended to `~/.claude-peers-messages.log`. Monitor in real time:
-
-```bash
-tail -f ~/.claude-peers-messages.log
-```
-
-Each entry includes a timestamp, direction (SENT/received), peer ID, and full message text.
-
-### CLI status
-
-`bun cli.ts status` shows all registered peers with `[SESSION_NAME]` tags, PIDs, working directories, summaries, and last-seen timestamps.
-
-## Broker API
-
-All endpoints accept POST with JSON body and return JSON. The broker listens on `127.0.0.1:7899` (configurable via `CLAUDE_PEERS_PORT`).
-
-| Method | Path | Request Body | Response |
-|--------|------|-------------|----------|
-| GET | `/health` | *(none)* | `{ status: "ok", peers: number }` |
-| POST | `/register` | `{ pid, cwd, git_root, tty, session_name?, summary }` | `{ id: string }` |
-| POST | `/heartbeat` | `{ id }` | `{ ok: true }` |
-| POST | `/set-summary` | `{ id, summary }` | `{ ok: true }` |
-| POST | `/set-name` | `{ id, session_name }` | `{ ok: true }` |
-| POST | `/list-peers` | `{ scope, cwd, git_root, exclude_id? }` | `Peer[]` |
-| POST | `/send-message` | `{ from_id, to_id, text }` | `{ ok: true }` or `{ ok: false, error: string }` |
-| POST | `/poll-messages` | `{ id }` | `{ messages: Message[] }` |
-| POST | `/unregister` | `{ id }` | `{ ok: true }` |
-
 ## Configuration
 
-| Environment Variable | Default | Description |
-|---------------------|---------|-------------|
+### Config file
+
+`~/.claude-peers-config.json` -- persistent configuration. Created automatically by the federation setup wizard.
+
+```json
+{
+  "federation": {
+    "enabled": true,
+    "port": 7900,
+    "subnet": "192.168.1.0/24"
+  }
+}
+```
+
+### Environment variables
+
+Environment variables override config file values.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
 | `CLAUDE_PEERS_PORT` | `7899` | Broker HTTP port |
-| `CLAUDE_PEERS_DB` | `~/.claude-peers.db` | SQLite database file path |
-| `OPENAI_API_KEY` | *(none)* | Enables auto-summary generation via `gpt-5.4-nano` on session startup |
+| `CLAUDE_PEERS_DB` | `~/.claude-peers.db` | SQLite database path |
+| `CLAUDE_PEERS_TOKEN` | `~/.claude-peers-token` | Auth token file path |
+| `CLAUDE_PEERS_FEDERATION_ENABLED` | `false` | Enable LAN federation |
+| `CLAUDE_PEERS_FEDERATION_PORT` | `7900` | Federation TLS port |
+| `CLAUDE_PEERS_FEDERATION_SUBNET` | auto-detected | Allowed CIDR range for federation connections |
+| `CLAUDE_PEERS_FEDERATION_CERT` | `~/.claude-peers-federation.crt` | TLS certificate path |
+| `CLAUDE_PEERS_FEDERATION_KEY` | `~/.claude-peers-federation.key` | TLS private key path |
+
+## Architecture
+
+```
+                  +--------------------------+
+                  |     Broker Daemon        |
+                  |   localhost:7899 (HTTP)  |
+                  |   localhost:7900 (TLS)   |  <-- Federation
+                  |   SQLite state store     |
+                  +------+-----------+------+
+                         |           |
+                    MCP Server A  MCP Server B     (stdio, one per session)
+                         |           |
+                    Claude A     Claude B
+```
+
+Three components, two processes:
+
+| Component | Process | Description |
+|-----------|---------|-------------|
+| **Broker** (`src/broker.ts`) | Singleton daemon | HTTP API on port 7899 for peer registry and message routing. Federation TLS server on port 7900 (same process). SQLite for state. Auto-launched by the first MCP server. |
+| **MCP Server** (`src/server.ts`) | One per session | Stdio MCP server registered with Claude Code. Spawns the broker if needed. Handles tool calls, polls for messages, pushes them into the session via channel notifications. |
+| **CLI** (`src/cli.ts`) | On-demand | Terminal utility for inspecting state, sending messages, and managing federation. Communicates with the broker over HTTP. |
+
+All local communication (server-to-broker, CLI-to-broker) uses bearer token auth. Federation (broker-to-broker) uses TLS with PSK headers and HMAC-signed payloads.
 
 ## Security
 
-- **Localhost only**: The broker binds to `127.0.0.1` and is not reachable from the network.
-- **Rate limiting**: 60 requests per minute per IP. Returns HTTP 429 when exceeded. The `/health` endpoint is exempt.
-- **Message size limit**: 10KB maximum per message. Oversized messages are rejected with an error.
-- **Message cleanup**: Delivered messages older than 7 days are automatically purged. Cleanup runs on broker startup and every 60 seconds thereafter.
-- **Stale peer cleanup**: Peers whose PIDs no longer exist are removed on broker startup and every 30 seconds.
+| Layer | Mechanism |
+|-------|-----------|
+| **Local auth** | Bearer token (`~/.claude-peers-token`, auto-generated). All broker POST endpoints require it. |
+| **Token rotation** | Send `SIGHUP` to the broker to reload the token file without restart. |
+| **Federation transport** | TLS with self-signed certificates (RSA-2048 for macOS LibreSSL compatibility). |
+| **Federation auth** | Pre-shared key (PSK) in `X-Claude-Peers-PSK` header. Both machines must share `~/.claude-peers-token`. |
+| **Message integrity** | HMAC-SHA256 signing on all federation relay requests. |
+| **Subnet filtering** | Configurable CIDR allowlist for federation connections. Rejects connections from outside the range. |
+| **Rate limiting** | 60 requests/min per IP on message endpoints. `/health`, `/register`, and `/heartbeat` are exempt. |
+| **Message limits** | 10KB max payload per message. |
+| **Stale cleanup** | Dead peers (PID check) removed every 30s. Delivered messages purged after 7 days. |
+| **Localhost binding** | Broker HTTP API binds to `127.0.0.1` only -- not reachable from the network. |
 
-## Fork Divergence from Upstream
-
-Changes made beyond [louislva/claude-peers-mcp](https://github.com/louislva/claude-peers-mcp):
-
-| Feature | Description |
-|---------|-------------|
-| `session_name` field | First-class field in the peer registry. Stored in SQLite, returned in `list_peers`, included as `from_name` in channel push metadata. |
-| `set_name` MCP tool | Allows Claude Code to set its session name (from `/rename`). |
-| `set_name` CLI command | `bun cli.ts set-name <id> <name>` for setting peer names from the terminal. |
-| `/set-name` broker endpoint | HTTP endpoint for updating a peer's session name. |
-| Schema migration | `ALTER TABLE peers ADD COLUMN session_name` runs automatically on existing databases. |
-| Rate limiting | 60 req/min per IP on all broker endpoints (except `/health`). |
-| Message size limits | 10KB max per message, enforced at the broker. |
-| Message cleanup | Delivered messages purged after 7 days. |
-| Full message logging | Sent and received messages logged to stderr (no truncation) and `~/.claude-peers-messages.log`. |
-| ZSH wrapper support | Documentation and pattern for auto-including `--dangerously-load-development-channels`. |
-
-**Sync policy**: Periodic `git fetch upstream` with selective cherry-picks. See `FYI.md` for the backlog.
-
-## Development
-
-### Run the broker directly
-
-```bash
-bun src/broker.ts
-```
-
-The broker logs to stderr. It creates (or opens) the SQLite database at the configured path.
-
-### Run the MCP server directly
-
-```bash
-bun src/server.ts
-```
-
-This auto-launches the broker if it is not already running, then connects via stdio.
-
-### Run tests
-
-```bash
-bun test
-```
-
-### Type check
-
-```bash
-bunx tsc --noEmit
-```
-
-### Project structure
+## Project Structure
 
 ```
 claude-peers-mcp/
   src/
-    broker.ts          # HTTP broker daemon + SQLite
-    server.ts          # MCP stdio server (one per Claude Code session)
-    cli.ts             # CLI utility
-    federation.ts      # LAN federation transport (TLS, HMAC, cert gen)
-    index.ts           # Package entry point
+    broker.ts              # HTTP broker daemon + SQLite + federation TLS server
+    server.ts              # MCP stdio server + channel push notifications
+    cli.ts                 # CLI utility
+    federation.ts          # TLS cert generation, HMAC signing, subnet filtering
+    index.ts               # Package entry point
     shared/
-      types.ts         # TypeScript interfaces
-      summarize.ts     # Auto-summary via git context
-      token.ts         # Shared bearer token reader
+      types.ts             # TypeScript interfaces
+      token.ts             # Shared bearer token reader
+      summarize.ts         # Deterministic git-based auto-summary
+      config.ts            # Config file reader (~/.claude-peers-config.json)
+  tests/
+    broker.test.ts         # Broker + federation endpoint tests (43 tests)
+    server.test.ts         # MCP server integration tests (18 tests)
+    federation.test.ts     # Federation TLS/PSK/HMAC/subnet tests (22 tests)
+    cli.test.ts            # CLI + auto-summary tests (17 tests)
   docs/
-    TROUBLESHOOTING.md # Diagnostics and common issues
+    TROUBLESHOOTING.md     # Diagnostic guide
+  cpm-logs/                # Runtime logs (gitignored)
   package.json
-  CLAUDE.md            # Project instructions for Claude Code
-  FYI.md               # Decision journal and backlog
+  CHANGELOG.md
 ```
+
+## Testing
+
+100 tests, 302 assertions.
+
+```bash
+bun test                           # Run all tests
+bun test tests/broker.test.ts      # Broker + federation endpoints
+bun test tests/server.test.ts      # MCP server integration
+bun test tests/federation.test.ts  # Federation TLS/PSK/HMAC
+bun test tests/cli.test.ts         # CLI + auto-summary
+```
+
+## Observability
+
+Logs in `cpm-logs/` (gitignored): `messages.log`, `broker.log`, `server.log`, `federation.log`.
+
+```bash
+tail -f cpm-logs/*.log        # Watch all logs
+bun src/cli.ts status          # Broker state from terminal
+```
+
+See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for diagnostic steps and common issues.
 
 ## Requirements
 
-- [Bun](https://bun.sh) runtime
+- [Bun](https://bun.sh) v1.1+ runtime
 - Claude Code v2.1.80+
-- claude.ai login (channels require it -- API key auth does not support channels)
+- Claude.ai login (channel push requires it -- API key auth does not support channels)
+
+## Fork Differences from Upstream
+
+This is a fork of [louislva/claude-peers-mcp](https://github.com/louislva/claude-peers-mcp) with significant additions:
+
+| Feature | Description |
+|---------|-------------|
+| LAN federation | Cross-machine peer discovery and messaging with TLS, PSK, and HMAC security |
+| Federation CLI | Setup wizard, connect/disconnect/status commands with WSL2/macOS/Linux support |
+| Structured messages | Message types (text, query, response, handoff, broadcast), JSON metadata, threading |
+| Broadcast messaging | Scoped group messaging to all peers in machine/directory/repo/LAN |
+| Bearer token auth | Auto-generated token on all broker endpoints with SIGHUP rotation |
+| Session naming | `set_name` tool and CLI command, `from_name` in channel push metadata |
+| Auto-summary | Deterministic git-based summaries (no external API dependencies) |
+| Config file | `~/.claude-peers-config.json` for persistent settings |
+| Rate limiting | 60 req/min per IP on message endpoints |
+| Message safeguards | 10KB size limit, 7-day delivered message cleanup |
+| Zombie prevention | Parent death detection + TTY-based eviction for stale MCP servers |
+| Full test suite | 100 tests, 302 assertions across broker, server, federation, and CLI |
+| Observability | Centralized logs in `cpm-logs/`, full message logging, CLI status command |
 
 ## License
 
-This project is a private fork. Upstream ([louislva/claude-peers-mcp](https://github.com/louislva/claude-peers-mcp)) does not specify a license.
+MIT
