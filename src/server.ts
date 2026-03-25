@@ -716,70 +716,21 @@ async function pollAndPushMessages() {
   }
 }
 
-// --- Stale process detection ---
-
-/**
- * Kill stale MCP server processes that are running from a different path.
- * This handles the case where the MCP config path changed (e.g., repo restructure)
- * but old processes are still alive from the old path.
- */
-async function killStaleMcpServers(): Promise<void> {
-  const myPid = process.pid;
-  // Resolve our own server.ts path for comparison
-  const myServerPath = new URL(import.meta.url).pathname;
-
-  try {
-    // Find all bun processes running server.ts
-    const proc = Bun.spawn(["pgrep", "-f", "bun.*server\\.ts"], {
-      stdout: "pipe",
-      stderr: "ignore",
-    });
-    const output = await new Response(proc.stdout).text();
-    await proc.exited;
-    const pids = output
-      .trim()
-      .split("\n")
-      .filter((p) => p.length > 0)
-      .map(Number)
-      .filter((p) => !isNaN(p));
-
-    for (const pid of pids) {
-      if (pid === myPid) continue; // Don't kill ourselves
-
-      try {
-        // Read the process's command line to check its path
-        const cmdline = await Bun.file(`/proc/${pid}/cmdline`).text();
-        // cmdline is null-separated
-        const args = cmdline.split("\0");
-
-        // Check if this process is running a DIFFERENT server.ts path.
-        // Use path.resolve() to normalize relative paths (e.g., "./src/server.ts")
-        // before comparison. Without this, relative vs absolute paths cause
-        // a murder-suicide loop where sessions kill each other on startup.
-        const serverArg = args.find((a) => a.includes("server.ts"));
-        if (serverArg) {
-          const resolvedArg = require("node:path").resolve(serverArg);
-          const resolvedMy = require("node:path").resolve(myServerPath);
-          if (resolvedArg !== resolvedMy) {
-            log(`Killing stale MCP server PID ${pid} (running from old path: ${serverArg})`);
-            process.kill(pid, "SIGTERM");
-          }
-        }
-      } catch {
-        // Process may have already exited, ignore
-      }
-    }
-  } catch {
-    // pgrep not available or failed, non-fatal
-  }
-}
+// --- Stale process cleanup ---
+// Stale MCP servers are handled by two mechanisms:
+// 1. Parent death detection: stdin close + PPID check (see main() setup)
+//    → When a Claude session exits, its MCP server detects stdin close and exits
+// 2. TTY-based broker eviction: handleRegister in broker.ts
+//    → When a new MCP server registers on the same TTY, the old peer is evicted
+//
+// The previous pgrep-based approach was removed because it caused a
+// murder-suicide loop: pgrep -f matched shell wrapper processes (not just bun),
+// and /proc/pid/cmdline contained the entire eval'd shell script, causing
+// path comparisons to fail and sessions to kill each other on startup.
 
 // --- Startup ---
 
 async function main() {
-  // 0. Kill stale MCP servers from old paths before anything else
-  await killStaleMcpServers();
-
   // 1. Ensure broker is running
   await ensureBroker();
 

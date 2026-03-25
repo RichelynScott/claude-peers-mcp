@@ -445,10 +445,7 @@ if (Bun.main === import.meta.path) {
     case "restart": {
       console.log("Killing all claude-peers processes (broker + MCP servers)...");
 
-      // Kill all MCP server processes (bun running server.ts)
-      Bun.spawnSync(["pkill", "-f", "bun.*server\\.ts"]);
-
-      // Kill broker via port lookup
+      // Kill broker via port lookup (safe — broker is always on known port)
       try {
         const proc = Bun.spawnSync(["lsof", "-ti", `:${BROKER_PORT}`]);
         const pids = new TextDecoder()
@@ -461,10 +458,12 @@ if (Bun.main === import.meta.path) {
         }
       } catch {}
 
-      // Force kill any remaining broker processes
-      Bun.spawnSync(["pkill", "-f", "bun.*broker\\.ts"]);
+      // When the broker dies, MCP servers will detect it on next poll
+      // and the parent death detection (stdin close) handles the rest.
+      // Do NOT use pkill -f "bun.*server.ts" — it matches shell wrapper
+      // processes and causes collateral damage.
 
-      console.log("All claude-peers processes killed.");
+      console.log("Broker killed. MCP servers will exit when their sessions reconnect.");
       console.log("Run /mcp in each Claude Code session to reconnect.");
       break;
     }
