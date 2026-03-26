@@ -58,3 +58,6 @@ HANDOFF.md
 
 # Internal improvement project PRDs
 IMPROVEMENT_PROJECTS/
+
+# Auto-generated bug reports (delivery failures)
+BUG_REPORTS/

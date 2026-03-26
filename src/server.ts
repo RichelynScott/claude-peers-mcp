@@ -258,6 +258,111 @@ async function processOptimisticConfirmations() {
   }
 }
 
+// --- Task A: Sent message tracking for delivery confirmation ---
+
+interface SentMessage {
+  messageId: number;
+  toId: string;
+  sentAt: number;
+  warned: boolean;
+}
+
+const sentMessages = new Map<number, SentMessage>();
+const DELIVERY_CHECK_DELAY_MS = 30_000; // Check after 30s
+const SENT_MESSAGE_TTL_MS = 300_000; // Clean up after 5 min
+const deliveryWarnings: string[] = []; // Warnings to inject into next tool response
+
+async function checkSentMessageDelivery() {
+  const now = Date.now();
+  const toCheck: SentMessage[] = [];
+
+  for (const [id, sent] of sentMessages) {
+    // Clean up old entries
+    if (now - sent.sentAt > SENT_MESSAGE_TTL_MS) {
+      sentMessages.delete(id);
+      continue;
+    }
+    // Check messages older than 30s that haven't been warned about
+    if (!sent.warned && now - sent.sentAt > DELIVERY_CHECK_DELAY_MS) {
+      toCheck.push(sent);
+    }
+  }
+
+  for (const sent of toCheck) {
+    try {
+      const status = await brokerFetch<{ delivered: boolean; error?: string }>("/message-status", { message_id: sent.messageId });
+      if (!status.delivered) {
+        sent.warned = true;
+        const warning = `⚠ Message #${sent.messageId} to ${sent.toId} may not have been delivered (sent ${Math.round((now - sent.sentAt) / 1000)}s ago, still unconfirmed)`;
+        log(warning);
+        deliveryWarnings.push(warning);
+        // Task B: Auto bug report
+        writeBugReport(sent, "unconfirmed_delivery");
+      } else {
+        // Confirmed — clean up
+        sentMessages.delete(sent.messageId);
+      }
+    } catch {
+      // Broker unreachable — skip this check
+    }
+  }
+}
+
+// --- Task B: Auto bug reports on delivery failure ---
+
+const BUG_REPORT_DIR = new URL("../BUG_REPORTS", import.meta.url).pathname;
+const FAILURE_LOG_PATH = `${CPM_LOG_DIR}/delivery-failures.log`;
+
+async function writeBugReport(sent: SentMessage, reason: string, error?: string) {
+  const timestamp = new Date().toISOString();
+  const filename = `${timestamp.replace(/[:.]/g, "-")}_msg${sent.messageId}.md`;
+
+  // Gather diagnostics
+  let brokerHealth = "unknown";
+  let peerList = "unknown";
+  try {
+    const health = await fetch(`${BROKER_URL}/health`, { signal: AbortSignal.timeout(2000) });
+    if (health.ok) brokerHealth = JSON.stringify(await health.json());
+  } catch {}
+  try {
+    const peers = await brokerFetch<{ id: string; session_name?: string }[]>("/list-peers", { scope: "machine", cwd: myCwd, git_root: myGitRoot });
+    peerList = peers.map((p: any) => `${p.session_name || p.id} (${p.id})`).join(", ");
+  } catch {}
+
+  const report = `# Bug Report: ${reason}
+
+**Timestamp**: ${timestamp}
+**Message ID**: ${sent.messageId}
+**From**: ${myId}
+**To**: ${sent.toId}
+**Sent At**: ${new Date(sent.sentAt).toISOString()}
+**Age**: ${Math.round((Date.now() - sent.sentAt) / 1000)}s
+**Reason**: ${reason}
+${error ? `**Error**: ${error}\n` : ""}
+## Diagnostics
+
+**Broker Health**: ${brokerHealth}
+**Active Peers**: ${peerList}
+**Pending Inbound**: ${pendingMessages.size} message(s)
+**Tracked Outbound**: ${sentMessages.size} message(s)
+`;
+
+  // Write bug report file
+  try {
+    require("fs").mkdirSync(BUG_REPORT_DIR, { recursive: true });
+    await Bun.write(Bun.file(`${BUG_REPORT_DIR}/${filename}`), report);
+    log(`Bug report written: BUG_REPORTS/${filename}`);
+  } catch (e) {
+    log(`Failed to write bug report: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // Append to delivery failures log
+  try {
+    const logEntry = `[${timestamp}] ${reason} | msg#${sent.messageId} to ${sent.toId} | age=${Math.round((Date.now() - sent.sentAt) / 1000)}s${error ? ` | error=${error}` : ""}\n`;
+    await Bun.write(Bun.file(FAILURE_LOG_PATH), logEntry, { append: true });
+  } catch {}
+}
+
 // --- MCP Server ---
 
 const mcp = new Server(
@@ -396,6 +501,30 @@ const TOOLS = [
       required: ["message", "scope"],
     },
   },
+  {
+    name: "message_status",
+    description:
+      "Check the delivery status of a previously sent message by its message ID.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        message_id: {
+          type: "number" as const,
+          description: "The message ID returned when the message was sent.",
+        },
+      },
+      required: ["message_id"],
+    },
+  },
+  {
+    name: "channel_health",
+    description:
+      "Diagnose messaging health: broker status, pending messages, delivery failures, and channel push state. Use when messages are not being delivered.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {},
+    },
+  },
 ];
 
 // --- Tool handlers ---
@@ -529,17 +658,37 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           confirmMessages([reply_to], "reply_to").catch(() => {});
         }
 
+        // Task A: Track sent message for delivery confirmation
+        if (result.message_id != null) {
+          sentMessages.set(result.message_id, {
+            messageId: result.message_id,
+            toId: to_id,
+            sentAt: Date.now(),
+            warned: false,
+          });
+        }
+
         // Build preview: first line or first 120 chars
         const preview = message.split("\n")[0].slice(0, 120) + (message.length > 120 ? "..." : "");
+        // Include any pending delivery warnings
+        let responseText = `Message sent to peer ${to_id} (${msgIdTag})\n> Preview: ${preview}`;
+        if (deliveryWarnings.length > 0) {
+          responseText += `\n\n${deliveryWarnings.join("\n")}`;
+          deliveryWarnings.length = 0;
+        }
         return {
-          content: [{ type: "text" as const, text: `Message sent to peer ${to_id} (${msgIdTag})\n> Preview: ${preview}` }],
+          content: [{ type: "text" as const, text: responseText }],
         };
       } catch (e) {
+        // Task B: Auto bug report on send failure
+        const errMsg = e instanceof Error ? e.message : String(e);
+        const failedSent: SentMessage = { messageId: 0, toId: to_id, sentAt: Date.now(), warned: true };
+        writeBugReport(failedSent, "send_failure", errMsg).catch(() => {});
         return {
           content: [
             {
               type: "text" as const,
-              text: `Error sending message: ${e instanceof Error ? e.message : String(e)}`,
+              text: `Error sending message: ${errMsg}`,
             },
           ],
           isError: true,
@@ -720,6 +869,84 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
     }
 
+    case "message_status": {
+      const { message_id } = args as { message_id: number };
+      if (!myId) {
+        return { content: [{ type: "text" as const, text: "Not registered with broker yet" }], isError: true };
+      }
+      try {
+        const status = await brokerFetch<{ id: number; from_id: string; to_id: string; delivered: boolean; sent_at: string; error?: string }>("/message-status", { message_id });
+        if ((status as any).error) {
+          return { content: [{ type: "text" as const, text: `Message #${message_id} not found` }] };
+        }
+        const state = status.delivered ? "confirmed" : "unconfirmed";
+        return {
+          content: [{ type: "text" as const, text: `Message #${status.id}: ${state}\n  From: ${status.from_id}\n  To: ${status.to_id}\n  Sent: ${status.sent_at}\n  Delivered: ${status.delivered}` }],
+        };
+      } catch (e) {
+        return { content: [{ type: "text" as const, text: `Error checking status: ${e instanceof Error ? e.message : String(e)}` }], isError: true };
+      }
+    }
+
+    case "channel_health": {
+      const report: string[] = ["Channel Health Report", "=".repeat(21), ""];
+
+      // Broker health
+      try {
+        const health = await fetch(`${BROKER_URL}/health`, { signal: AbortSignal.timeout(2000) });
+        if (health.ok) {
+          const data = await health.json() as { status: string; peers: number; uptime_ms?: number; requests_last_minute?: number; pending_messages?: number };
+          report.push(`Broker: ${data.status} (${data.peers} peers)`);
+          if (data.uptime_ms) report.push(`  Uptime: ${Math.round(data.uptime_ms / 1000)}s`);
+          if (data.requests_last_minute != null) report.push(`  Requests/min: ${data.requests_last_minute}`);
+          if (data.pending_messages != null) report.push(`  Pending in broker: ${data.pending_messages}`);
+        } else {
+          report.push(`Broker: error (HTTP ${health.status})`);
+        }
+      } catch {
+        report.push("Broker: unreachable");
+      }
+
+      // Channel push state
+      report.push("");
+      report.push(`Inbound pending (pushed, unconfirmed): ${pendingMessages.size}`);
+      report.push(`Outbound tracked (sent, awaiting confirmation): ${sentMessages.size}`);
+      report.push(`Delivery warnings pending: ${deliveryWarnings.length}`);
+
+      // Recent delivery failures
+      try {
+        const failLogExists = await Bun.file(FAILURE_LOG_PATH).exists();
+        if (failLogExists) {
+          const content = await Bun.file(FAILURE_LOG_PATH).text();
+          const lines = content.trim().split("\n").filter(l => l.trim());
+          const recent = lines.slice(-5);
+          if (recent.length > 0) {
+            report.push("");
+            report.push(`Recent delivery failures (last ${recent.length}):`);
+            for (const line of recent) {
+              report.push(`  ${line}`);
+            }
+          }
+        }
+      } catch {}
+
+      // Bug reports count
+      try {
+        const dirExists = require("fs").existsSync(BUG_REPORT_DIR);
+        if (dirExists) {
+          const files = require("fs").readdirSync(BUG_REPORT_DIR).filter((f: string) => f.endsWith(".md"));
+          if (files.length > 0) {
+            report.push("");
+            report.push(`Bug reports: ${files.length} in BUG_REPORTS/`);
+          }
+        }
+      } catch {}
+
+      return {
+        content: [{ type: "text" as const, text: report.join("\n") }],
+      };
+    }
+
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
@@ -827,6 +1054,9 @@ async function pollAndPushMessages() {
 
     // Process optimistic confirmations: ack messages pending > 30s
     await processOptimisticConfirmations();
+
+    // Task A: Check delivery status of sent messages
+    await checkSentMessageDelivery();
   } catch (e) {
     // Broker might be down temporarily, don't crash
     log(`Poll error: ${e instanceof Error ? e.message : String(e)}`);

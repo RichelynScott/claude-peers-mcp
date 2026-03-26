@@ -689,6 +689,12 @@ Bun.serve({
         case "/ack-messages":
           handleAckMessages(body as AckMessagesRequest);
           return Response.json({ ok: true });
+        case "/message-status": {
+          const { message_id } = body as { message_id: number };
+          const msg = db.query("SELECT id, from_id, to_id, delivered, sent_at FROM messages WHERE id = ?").get(message_id) as { id: number; from_id: string; to_id: string; delivered: number; sent_at: string } | null;
+          if (!msg) return Response.json({ error: "not found" }, { status: 404 });
+          return Response.json({ id: msg.id, from_id: msg.from_id, to_id: msg.to_id, delivered: !!msg.delivered, sent_at: msg.sent_at });
+        }
         case "/unregister":
           handleUnregister(body as { id: string });
           return Response.json({ ok: true });

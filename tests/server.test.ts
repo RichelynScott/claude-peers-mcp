@@ -144,14 +144,16 @@ afterAll(async () => {
 // ---------------------------------------------------------------------------
 
 describe("Tool Registration", () => {
-  test("listTools returns all 6 tools with correct schemas", async () => {
+  test("listTools returns all 8 tools with correct schemas", async () => {
     const { tools } = await client.listTools();
     const names = tools.map((t) => t.name).sort();
 
     expect(names).toEqual([
       "broadcast_message",
+      "channel_health",
       "check_messages",
       "list_peers",
+      "message_status",
       "send_message",
       "set_name",
       "set_summary",
