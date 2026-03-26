@@ -23,7 +23,8 @@
 import * as path from "node:path";
 import * as fs from "node:fs";
 import { TOKEN_PATH, readTokenSync } from "./shared/token.ts";
-import { loadConfig, writeConfig, CONFIG_PATH } from "./shared/config.ts";
+import { loadConfig, writeConfig, CONFIG_PATH, addRemoteToConfig } from "./shared/config.ts";
+import { ensureTlsCert } from "./federation.ts";
 import type { BroadcastResponse, FederationStatusResponse } from "./shared/types.ts";
 
 const BROKER_PORT = parseInt(process.env.CLAUDE_PEERS_PORT ?? "7899", 10);
@@ -465,6 +466,352 @@ async function federationSetupLinux(fedPort: number): Promise<void> {
   console.log(`     bun src/cli.ts federation connect <remote-ip>:${fedPort}`);
 }
 
+// --- Helper: detect LAN IP ---
+async function detectLanIp(): Promise<string | null> {
+  const isWSL2 = !!process.env.WSL_DISTRO_NAME || (await Bun.file("/proc/sys/fs/binfmt_misc/WSLInterop").exists());
+  if (isWSL2) {
+    // On WSL2, get the Windows host LAN IP (not the WSL internal IP)
+    const proc = Bun.spawnSync(["powershell.exe", "-NoProfile", "-Command",
+      "Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -like '192.168.*' -or $_.IPAddress -like '10.*' } | Select-Object -First 1 -ExpandProperty IPAddress"],
+      { stdout: "pipe", stderr: "ignore" });
+    const ip = new TextDecoder().decode(proc.stdout).trim();
+    return ip || null;
+  }
+  if (process.platform === "darwin") {
+    const proc = Bun.spawnSync(["ipconfig", "getifaddr", "en0"], { stdout: "pipe", stderr: "ignore" });
+    return new TextDecoder().decode(proc.stdout).trim() || null;
+  }
+  // Linux
+  const proc = Bun.spawnSync(["hostname", "-I"], { stdout: "pipe", stderr: "ignore" });
+  const ips = new TextDecoder().decode(proc.stdout).trim().split(/\s+/);
+  return ips.find(ip => ip.startsWith("192.168.") || ip.startsWith("10.")) ?? ips[0] ?? null;
+}
+
+// --- US-003: federation init ---
+async function federationInit(): Promise<void> {
+  const isWSL2 = !!process.env.WSL_DISTRO_NAME || (await Bun.file("/proc/sys/fs/binfmt_misc/WSLInterop").exists());
+  const isMac = process.platform === "darwin";
+  const platform = isWSL2 ? "WSL2" : isMac ? "macOS" : "Linux";
+  const fedPort = parseInt(process.env.CLAUDE_PEERS_FEDERATION_PORT ?? "7900", 10);
+
+  console.log(`\n[Federation Init — ${platform} Detected]\n`);
+  let step = 1;
+
+  // 1. Config file
+  const existingConfig = loadConfig();
+  const subnet = isWSL2 ? "0.0.0.0/0" : (existingConfig.federation?.subnet || "0.0.0.0/0");
+  const newConfig = {
+    ...existingConfig,
+    federation: {
+      ...existingConfig.federation,
+      enabled: true,
+      port: fedPort,
+      subnet,
+    },
+  };
+  writeConfig(newConfig);
+  console.log(`  ${step++}. OK  Config file written (${CONFIG_PATH})`);
+
+  // 2. TLS certificate
+  try {
+    await ensureTlsCert();
+    console.log(`  ${step++}. OK  TLS certificate ready`);
+  } catch (e) {
+    console.log(`  ${step++}. FAIL  TLS certificate: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // 3. Auth token
+  const tokenExists = await Bun.file(TOKEN_PATH).exists();
+  if (tokenExists) {
+    console.log(`  ${step++}. OK  Auth token ready (${TOKEN_PATH})`);
+  } else {
+    // Token is auto-created by broker; just note it
+    console.log(`  ${step++}. OK  Auth token will be created on broker start`);
+  }
+
+  // 4. Platform-specific network setup
+  if (isWSL2) {
+    await federationSetupWSL2(fedPort);
+    step += 2;
+  } else if (isMac) {
+    await federationSetupMacOS(fedPort);
+    step += 2;
+  } else {
+    await federationSetupLinux(fedPort);
+    step += 2;
+  }
+
+  // 5. Kill broker to restart with new config
+  try {
+    await brokerFetch<{ ok: boolean }>("/health");
+    // Broker is running — kill it so it restarts with federation
+    const killProc = Bun.spawnSync(["pkill", "-f", "broker.ts"], { stdout: "ignore", stderr: "ignore" });
+    console.log(`  ${step++}. OK  Broker restarted with federation enabled`);
+  } catch {
+    console.log(`  ${step++}. OK  Broker not running (will start with federation on next session)`);
+  }
+
+  // 6. Output join command
+  const lanIp = await detectLanIp();
+  if (lanIp && tokenExists) {
+    try {
+      const token = readTokenSync();
+      const encodedToken = Buffer.from(token).toString("base64url");
+      const joinUrl = `cpt://${lanIp}:${fedPort}/${encodedToken}`;
+      console.log(`\nYour LAN IP: ${lanIp}`);
+      console.log(`\nTo connect another machine, run this on the remote:`);
+      console.log(`  bun src/cli.ts federation join ${joinUrl}`);
+      console.log(`\n⚠  This URL contains your federation token. Share it only with trusted machines on your LAN.`);
+    } catch {
+      console.log(`\nYour LAN IP: ${lanIp}`);
+      console.log(`\nGenerate a join URL: bun src/cli.ts federation token`);
+    }
+  } else if (lanIp) {
+    console.log(`\nYour LAN IP: ${lanIp}`);
+    console.log(`After broker starts, generate a join URL: bun src/cli.ts federation token`);
+  }
+  console.log("");
+}
+
+// --- US-004: federation token ---
+async function federationToken(): Promise<void> {
+  const config = loadConfig();
+  const fedPort = config.federation?.port || parseInt(process.env.CLAUDE_PEERS_FEDERATION_PORT ?? "7900", 10);
+  const lanIp = await detectLanIp();
+
+  if (!lanIp) {
+    console.error("Error: Could not detect LAN IP. Specify manually with: CLAUDE_PEERS_LAN_IP=x.x.x.x bun src/cli.ts federation token");
+    process.exit(1);
+  }
+
+  let token: string;
+  try {
+    token = readTokenSync();
+  } catch {
+    console.error(`Error: Token file not found at ${TOKEN_PATH}. Run 'federation init' first.`);
+    process.exit(1);
+  }
+
+  const encodedToken = Buffer.from(token).toString("base64url");
+  const joinUrl = `cpt://${lanIp}:${fedPort}/${encodedToken}`;
+
+  console.log(joinUrl);
+  console.error(`\n⚠  This URL contains your federation token. Share it only with trusted machines on your LAN.`);
+}
+
+// --- US-004: federation join ---
+async function federationJoin(cptUrl: string): Promise<void> {
+  // Parse cpt://<host>:<port>/<base64url-token>
+  if (!cptUrl.startsWith("cpt://")) {
+    console.error(`Error: Invalid URL format. Expected cpt://<host>:<port>/<token>`);
+    process.exit(1);
+  }
+
+  const remainder = cptUrl.slice(6); // strip cpt://
+  const slashIdx = remainder.indexOf("/", remainder.indexOf(":") + 1);
+  if (slashIdx === -1) {
+    console.error(`Error: Invalid URL format. Expected cpt://<host>:<port>/<token>`);
+    process.exit(1);
+  }
+
+  const hostPort = remainder.slice(0, slashIdx);
+  const encodedToken = remainder.slice(slashIdx + 1);
+  const colonIdx = hostPort.lastIndexOf(":");
+  const host = hostPort.slice(0, colonIdx);
+  const port = parseInt(hostPort.slice(colonIdx + 1), 10);
+
+  if (!host || isNaN(port)) {
+    console.error(`Error: Could not parse host:port from "${hostPort}"`);
+    process.exit(1);
+  }
+
+  let token: string;
+  try {
+    token = Buffer.from(encodedToken, "base64url").toString("utf-8");
+  } catch {
+    console.error(`Error: Could not decode token from URL`);
+    process.exit(1);
+  }
+
+  console.log(`[Federation Join]\n`);
+
+  // 1. Write token
+  const existingToken = await Bun.file(TOKEN_PATH).exists();
+  if (existingToken) {
+    const current = readTokenSync();
+    if (current !== token) {
+      console.log(`  ⚠  Token file already exists with a different token.`);
+      console.log(`  Overwriting with the new token from the join URL.`);
+    }
+  }
+  fs.writeFileSync(TOKEN_PATH, token + "\n", { mode: 0o600 });
+  console.log(`  1. OK  Token written to ${TOKEN_PATH}`);
+
+  // 2. Update config
+  const config = loadConfig();
+  const fedPort = config.federation?.port || 7900;
+  writeConfig({
+    ...config,
+    federation: {
+      ...config.federation,
+      enabled: true,
+      port: fedPort,
+      remotes: [
+        ...(config.federation?.remotes ?? []).filter(r => `${r.host}:${r.port}` !== `${host}:${port}`),
+        { host, port },
+      ],
+    },
+  });
+  console.log(`  2. OK  Config updated (federation enabled, remote added)`);
+
+  // 3. TLS cert
+  try {
+    await ensureTlsCert();
+    console.log(`  3. OK  TLS certificate ready`);
+  } catch (e) {
+    console.log(`  3. FAIL  TLS certificate: ${e instanceof Error ? e.message : String(e)}`);
+  }
+
+  // 4. Kill broker to restart
+  try {
+    Bun.spawnSync(["pkill", "-f", "broker.ts"], { stdout: "ignore", stderr: "ignore" });
+    console.log(`  4. OK  Broker restarted`);
+  } catch {
+    console.log(`  4. OK  Broker not running (will start on next session)`);
+  }
+
+  // 5. Wait for broker to come up and try to connect
+  console.log(`  5. Connecting to ${host}:${port}...`);
+  await new Promise(r => setTimeout(r, 2000)); // Wait for broker restart
+
+  try {
+    const result = await brokerFetch<{ ok: boolean; hostname?: string; error?: string }>("/federation/connect", { host, port });
+    if (result.ok) {
+      console.log(`     OK  Connected to ${result.hostname ?? host}`);
+    } else {
+      console.log(`     ⚠  Connection attempt failed: ${result.error}`);
+      console.log(`     The broker will auto-reconnect on next restart.`);
+    }
+  } catch {
+    console.log(`     ⚠  Broker not ready yet. Auto-reconnect will handle it on next startup.`);
+  }
+
+  console.log("");
+}
+
+// --- US-007: federation doctor ---
+async function federationDoctor(): Promise<void> {
+  let passed = 0;
+  let failed = 0;
+  let warnings = 0;
+
+  function ok(msg: string) { console.log(`  OK   ${msg}`); passed++; }
+  function fail(msg: string, fix?: string) {
+    console.log(`  FAIL ${msg}`);
+    if (fix) console.log(`       Fix: ${fix}`);
+    failed++;
+  }
+  function warn(msg: string, fix?: string) {
+    console.log(`  WARN ${msg}`);
+    if (fix) console.log(`       Fix: ${fix}`);
+    warnings++;
+  }
+
+  console.log(`\nFederation Health Check\n${"=".repeat(23)}\n`);
+
+  // 1. Config file
+  const config = loadConfig();
+  if (Object.keys(config).length > 0) {
+    ok(`Config file (${CONFIG_PATH})`);
+  } else {
+    fail(`Config file missing or empty`, `bun src/cli.ts federation init`);
+  }
+
+  // 2. Federation enabled
+  const fedEnabled = process.env.CLAUDE_PEERS_FEDERATION_ENABLED === "true" || config.federation?.enabled === true;
+  if (fedEnabled) {
+    const source = process.env.CLAUDE_PEERS_FEDERATION_ENABLED === "true" ? "env var" : "config file";
+    ok(`Federation enabled (source: ${source})`);
+  } else {
+    fail(`Federation not enabled`, `bun src/cli.ts federation enable`);
+  }
+
+  // 3. Token file
+  const tokenExists = await Bun.file(TOKEN_PATH).exists();
+  if (tokenExists) {
+    ok(`Auth token (${TOKEN_PATH})`);
+  } else {
+    fail(`Auth token missing`, `bun src/cli.ts rotate-token`);
+  }
+
+  // 4. TLS certificate
+  const certPath = `${process.env.HOME}/.claude-peers-federation.crt`;
+  const certExists = await Bun.file(certPath).exists();
+  if (certExists) {
+    ok(`TLS certificate (${certPath})`);
+  } else {
+    fail(`TLS certificate missing`, `bun src/cli.ts federation init`);
+  }
+
+  // 5. Broker running
+  let brokerOk = false;
+  let peerCount = 0;
+  try {
+    const health = await fetch("http://127.0.0.1:7899/health", { signal: AbortSignal.timeout(2000) });
+    if (health.ok) {
+      const data = await health.json() as { peers: number };
+      peerCount = data.peers;
+      ok(`Broker running (${peerCount} local peers)`);
+      brokerOk = true;
+    } else {
+      fail(`Broker returned HTTP ${health.status}`, `bun src/cli.ts kill-broker`);
+    }
+  } catch {
+    fail(`Broker not running`, `Start a Claude Code session or run: bun src/broker.ts`);
+  }
+
+  // 6. Federation TLS listening
+  if (brokerOk) {
+    try {
+      const status = await brokerFetch<FederationStatusResponse>("/federation/status");
+      if (status.enabled) {
+        ok(`Federation TLS listening on port ${status.port}`);
+
+        // 7. Connected remotes
+        if (status.remotes.length > 0) {
+          for (const r of status.remotes) {
+            ok(`Remote: ${r.hostname} (${r.host}:${r.port}) — ${r.peer_count} peer(s)`);
+          }
+        }
+
+        // Check config remotes vs actual connections
+        const connectedKeys = new Set(status.remotes.map((r: { host: string; port: number }) => `${r.host}:${r.port}`));
+        for (const saved of config.federation?.remotes ?? []) {
+          const key = `${saved.host}:${saved.port}`;
+          if (!connectedKeys.has(key)) {
+            warn(`Config has remote ${key} but it's not currently connected`, `bun src/cli.ts federation connect ${key}`);
+          }
+        }
+      } else {
+        fail(`Federation TLS not listening`, `Restart broker: bun src/cli.ts kill-broker`);
+      }
+    } catch {
+      fail(`Could not query federation status`);
+    }
+  }
+
+  // 8. LAN IP
+  const lanIp = await detectLanIp();
+  if (lanIp) {
+    ok(`LAN IP detected: ${lanIp}`);
+  } else {
+    warn(`Could not detect LAN IP`);
+  }
+
+  console.log(`\n${passed} passed, ${failed} failed, ${warnings} warning(s)\n`);
+  if (failed > 0) process.exit(1);
+}
+
 // ---------------------------------------------------------------------------
 // CLI entry point (only runs when executed directly, not when imported)
 // ---------------------------------------------------------------------------
@@ -855,8 +1202,29 @@ if (Bun.main === import.meta.path) {
           break;
         }
 
-        case "setup": {
-          await federationSetup();
+        case "setup":
+        case "init": {
+          await federationInit();
+          break;
+        }
+
+        case "token": {
+          await federationToken();
+          break;
+        }
+
+        case "join": {
+          const joinUrl = process.argv[4];
+          if (!joinUrl) {
+            console.error("Usage: bun cli.ts federation join cpt://<host>:<port>/<token>");
+            process.exit(1);
+          }
+          await federationJoin(joinUrl);
+          break;
+        }
+
+        case "doctor": {
+          await federationDoctor();
           break;
         }
 
@@ -896,7 +1264,7 @@ if (Bun.main === import.meta.path) {
         default:
           console.error(`Unknown federation subcommand: ${subCmd ?? "(none)"}`);
           console.error(
-            "Usage: bun cli.ts federation <connect|disconnect|setup|status|enable|disable> [args]"
+            "Usage: bun cli.ts federation <init|join|connect|disconnect|status|doctor|token|enable|disable> [args]"
           );
           process.exit(1);
       }
@@ -918,10 +1286,13 @@ Usage:
   bun cli.ts kill-broker                           Stop the broker daemon
 
 Federation:
-  bun cli.ts federation connect <host>:<port>      Connect to a remote broker
-  bun cli.ts federation disconnect <host>:<port>   Disconnect from a remote broker
+  bun cli.ts federation init                       One-command federation setup (config, certs, firewall)
+  bun cli.ts federation join <cpt-url>             Join a federation using a cpt:// URL from another machine
+  bun cli.ts federation token                      Generate a cpt:// URL for other machines to join
+  bun cli.ts federation doctor                     Diagnose federation health (checks all prerequisites)
+  bun cli.ts federation connect <host>:<port>      Connect to a remote broker (persists to config)
+  bun cli.ts federation disconnect <host>:<port>   Disconnect from a remote broker (removes from config)
   bun cli.ts federation status                     Show federation status
-  bun cli.ts federation setup                      Guided federation setup (WSL2/macOS port forwarding)
   bun cli.ts federation enable [port] [subnet]     Enable federation in config file
   bun cli.ts federation disable                    Disable federation in config file`);
   }

@@ -46,7 +46,7 @@ import {
   ipInSubnet,
   federationFetch,
 } from "./federation.ts";
-import { loadConfig } from "./shared/config.ts";
+import { loadConfig, addRemoteToConfig, removeRemoteFromConfig } from "./shared/config.ts";
 
 const PORT = parseInt(process.env.CLAUDE_PEERS_PORT ?? "7899", 10);
 const DB_PATH = process.env.CLAUDE_PEERS_DB ?? `${process.env.HOME}/.claude-peers.db`;
@@ -814,12 +814,52 @@ async function handleFederationConnect(body: FederationConnectRequest): Promise<
     });
 
     federationLog(`Connected to ${result.hostname} at ${host}:${port} (${remotePeers.length} peers)`);
+
+    // US-008: Persist to config file for auto-reconnect on restart
+    try {
+      addRemoteToConfig({ host, port, label: result.hostname });
+    } catch {
+      // Non-critical — config persistence is best-effort
+    }
+
     return { ok: true, hostname: result.hostname };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     federationLog(`Failed to connect to ${host}:${port}: ${msg}`);
     return { ok: false, error: msg };
   }
+}
+
+// US-002: Auto-reconnect to a saved remote with exponential backoff
+function autoReconnectRemote(host: string, port: number, label?: string) {
+  const key = `${host}:${port}`;
+  const delays = [0, 5000, 15000, 45000]; // then 60s forever
+
+  async function attempt(n: number) {
+    const delay = n < delays.length ? delays[n] : 60000;
+    if (delay > 0) await new Promise(r => setTimeout(r, delay));
+
+    if (remoteMachines.has(key)) {
+      federationLog(`Auto-reconnect to ${key}: already connected`);
+      return;
+    }
+
+    try {
+      const result = await handleFederationConnect({ host, port });
+      if (result.ok) {
+        federationLog(`Auto-reconnected to ${key} (${result.hostname ?? label ?? "unknown"}) on attempt ${n + 1}`);
+        return;
+      }
+      federationLog(`Auto-reconnect to ${key} attempt ${n + 1} failed: ${result.error}`);
+    } catch (e) {
+      federationLog(`Auto-reconnect to ${key} attempt ${n + 1} error: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    // Schedule next retry
+    attempt(n + 1);
+  }
+
+  attempt(0);
 }
 
 function handleFederationDisconnect(body: { host: string; port: number }): { ok: boolean; error?: string } {
@@ -835,6 +875,14 @@ function handleFederationDisconnect(body: { host: string; port: number }): { ok:
   const rm = remoteMachines.get(key)!;
   remoteMachines.delete(key);
   federationLog(`Disconnected from ${rm.hostname} at ${key}`);
+
+  // US-008: Remove from config file
+  try {
+    removeRemoteFromConfig(body.host, body.port);
+  } catch {
+    // Non-critical
+  }
+
   return { ok: true };
 }
 
@@ -1110,6 +1158,15 @@ if (FEDERATION_ENABLED) {
 
       // Prevent the timer from keeping the process alive if broker is shutting down
       if (federationSyncTimer.unref) federationSyncTimer.unref();
+
+      // US-002: Auto-reconnect to saved remotes from config file
+      const savedRemotes = persistentConfig.federation?.remotes ?? [];
+      if (savedRemotes.length > 0) {
+        federationLog(`Auto-reconnecting to ${savedRemotes.length} saved remote(s)...`);
+        for (const remote of savedRemotes) {
+          autoReconnectRemote(remote.host, remote.port, remote.label);
+        }
+      }
     } catch (err) {
       // CRITICAL: Federation failure must not crash the broker
       const msg = err instanceof Error ? err.message : String(err);

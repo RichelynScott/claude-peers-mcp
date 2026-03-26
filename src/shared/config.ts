@@ -18,15 +18,56 @@ import { homedir } from "node:os";
 
 export const CONFIG_PATH = `${homedir()}/.claude-peers-config.json`;
 
+export interface FederationRemote {
+  host: string;
+  port: number;
+  label?: string;
+}
+
 export interface PeersConfig {
   federation?: {
     enabled?: boolean;
     port?: number;
     subnet?: string;
+    remotes?: FederationRemote[];
   };
   server?: {
     startup_timeout_ms?: number;
   };
+}
+
+/**
+ * Add a remote to the config file's federation.remotes array.
+ * Deduplicates by host:port (upsert). Returns the updated config.
+ */
+export function addRemoteToConfig(remote: FederationRemote): PeersConfig {
+  const config = loadConfig();
+  if (!config.federation) config.federation = {};
+  if (!config.federation.remotes) config.federation.remotes = [];
+
+  const key = `${remote.host}:${remote.port}`;
+  const idx = config.federation.remotes.findIndex(r => `${r.host}:${r.port}` === key);
+  if (idx >= 0) {
+    config.federation.remotes[idx] = remote;
+  } else {
+    config.federation.remotes.push(remote);
+  }
+  writeConfig(config);
+  return config;
+}
+
+/**
+ * Remove a remote from the config file's federation.remotes array.
+ * Returns the updated config.
+ */
+export function removeRemoteFromConfig(host: string, port: number): PeersConfig {
+  const config = loadConfig();
+  if (!config.federation?.remotes) return config;
+
+  const key = `${host}:${port}`;
+  config.federation.remotes = config.federation.remotes.filter(r => `${r.host}:${r.port}` !== key);
+  writeConfig(config);
+  return config;
 }
 
 /**
