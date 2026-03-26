@@ -11,6 +11,7 @@ export async function generateSummary(context: {
   git_branch?: string | null;
   recent_files?: string[];
   session_name?: string | null;
+  tty?: string | null;
 }): Promise<string | null> {
   const parts: string[] = [];
 
@@ -31,10 +32,11 @@ export async function generateSummary(context: {
     parts.push(`recently touched ${fileList}`);
   }
 
-  // Build prefix: [SessionName] or [project:branch]
+  // Build prefix: [SessionName] or [project:branch], with optional TTY for disambiguation
+  const ttyTag = context.tty ? `:${context.tty.replace("/dev/", "")}` : "";
   const prefix = context.session_name
-    ? `[${context.session_name}]`
-    : `[${projectName}:${branch}]`;
+    ? `[${context.session_name}${ttyTag}]`
+    : `[${projectName}:${branch}${ttyTag}]`;
 
   if (parts.length === 0) {
     return `${prefix} Working in ${projectName}`;

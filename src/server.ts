@@ -168,6 +168,18 @@ const SERVER_LOG_PATH = `${CPM_LOG_DIR}/server.log`;
 // Ensure log directory exists
 try { require("fs").mkdirSync(CPM_LOG_DIR, { recursive: true }); } catch {}
 
+function formatAge(isoTimestamp: string): string {
+  const diffMs = Math.max(0, Date.now() - new Date(isoTimestamp).getTime());
+  const totalMin = Math.floor(diffMs / 60_000);
+  if (totalMin < 1) return "<1m";
+  if (totalMin < 60) return `${totalMin}m`;
+  const hours = Math.floor(totalMin / 60);
+  const mins = totalMin % 60;
+  if (hours < 24) return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ${hours % 24}h`;
+}
+
 function log(msg: string) {
   // MCP stdio servers must only use stderr for logging (stdout is the MCP protocol)
   const line = `[${new Date().toISOString()}] [CPM-server] ${msg}`;
@@ -256,7 +268,9 @@ Available tools:
 - set_name: Set your session name (from /rename). Helps peers identify you by name instead of opaque ID.
 - check_messages: Check for messages. Channel push notifications are unreliable — call this when you are waiting for a reply that hasn't appeared, or periodically every few minutes.
 
-When you start or after using /rename, call set_name with your session name. This helps other instances identify you by name instead of opaque ID. Also call set_summary with [SESSION_NAME] prefix convention: '[MySession] description of work'.
+When you start or after using /rename, call set_name with your session name. This helps other instances identify you by name instead of opaque ID.
+
+IMPORTANT — KEEP YOUR SUMMARY CURRENT: Call set_summary whenever your work focus changes — starting a new task, switching files, beginning a review, etc. Use the convention '[SessionName] specific task description' (e.g., '[AUTH_WORKER] implementing JWT refresh logic in auth.ts'). Multiple sessions in the same directory rely on summaries to tell each other apart. Generic summaries like 'Working in project' are unhelpful — be specific about WHAT you are doing, not just WHERE.
 
 IMPORTANT: Channel push notifications may not always appear. If you are waiting for a reply and it hasn't arrived, call check_messages to retrieve it. Messages sent to you are reliably stored — they just may not trigger a visible notification every time.`,
   }
@@ -442,8 +456,11 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           const header = p.session_name
             ? `**${p.session_name}** (${p.id})`
             : `${p.id} (unnamed)`;
+          // Registration age for disambiguation
+          const age = p.registered_at ? formatAge(p.registered_at) : "";
+          const ageTag = age ? `  Active: ${age}` : "";
           const details = [
-            `  PID: ${p.pid}  |  CWD: ${p.cwd}`,
+            `  PID: ${p.pid}  |  CWD: ${p.cwd}${ageTag}`,
           ];
           if (p.git_root) details.push(`  Repo: ${p.git_root}`);
           if (p.tty) details.push(`  TTY: ${p.tty}`);
@@ -595,6 +612,19 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       try {
         await brokerFetch("/set-name", { id: myId, session_name: sessionName });
         mySessionName = sessionName;
+        // Immediately regenerate summary with the new session name
+        try {
+          const branch = await getGitBranch(myCwd);
+          const recentFiles = await getRecentFiles(myCwd);
+          const ttyVal = getTty();
+          const updatedSummary = await generateSummary({
+            cwd: myCwd, git_root: myGitRoot, git_branch: branch,
+            recent_files: recentFiles, session_name: sessionName, tty: ttyVal,
+          });
+          if (updatedSummary) {
+            await brokerFetch("/set-summary", { id: myId, summary: updatedSummary });
+          }
+        } catch { /* Non-critical */ }
         return {
           content: [{ type: "text" as const, text: `Session name set: "${sessionName}"` }],
         };
@@ -946,6 +976,7 @@ async function main() {
         git_branch: branch,
         recent_files: recentFiles,
         session_name: mySessionName || null,
+        tty,
       });
       if (summary) {
         initialSummary = summary;
@@ -1040,7 +1071,7 @@ async function main() {
       const recentFiles = await getRecentFiles(myCwd);
       const updatedSummary = await generateSummary({
         cwd: myCwd, git_root: myGitRoot, git_branch: branch,
-        recent_files: recentFiles, session_name: mySessionName,
+        recent_files: recentFiles, session_name: mySessionName, tty,
       });
       if (updatedSummary) {
         await brokerFetch("/set-summary", { id: myId, summary: updatedSummary });
@@ -1061,6 +1092,18 @@ async function main() {
         }
       }
     });
+  }
+
+  // Ensure a summary is always set — even for brand-new sessions with no work yet.
+  // This guarantees the session name appears in list_peers immediately.
+  if (myId && !initialSummary && mySessionName) {
+    const dir = myGitRoot || myCwd;
+    const projectName = dir.split("/").pop() || dir;
+    const fallback = `[${mySessionName}] Awaiting tasks in ${projectName}`;
+    try {
+      await brokerFetch("/set-summary", { id: myId, summary: fallback });
+      log(`Fallback summary set: ${fallback}`);
+    } catch { /* Non-critical */ }
   }
 
   // 5. Connect MCP over stdio
