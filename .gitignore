@@ -61,3 +61,6 @@ IMPROVEMENT_PROJECTS/
 
 # Auto-generated bug reports (delivery failures)
 BUG_REPORTS/
+
+# Worker file-based communications (fallback when CPM is unstable)
+WORKER_COMMS/
