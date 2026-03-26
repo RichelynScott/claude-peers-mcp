@@ -222,7 +222,7 @@ let channelPushVerified = false;
 // Only acked to broker when confirmation evidence arrives:
 //   1. Claude calls check_messages (explicit read)
 //   2. Claude calls send_message with reply_to referencing a pending msg
-//   3. Optimistic timeout (30s) expires without transport error
+//   3. Optimistic timeout (120s) expires without transport error
 
 interface PendingMessage {
   msg: Message;
@@ -271,7 +271,8 @@ interface SentMessage {
 const sentMessages = new Map<number, SentMessage>();
 const DELIVERY_CHECK_DELAY_MS = 30_000; // Sender checks after 30s — must be shorter than OPTIMISTIC_CONFIRM_MS
 const SENT_MESSAGE_TTL_MS = 300_000; // Clean up after 5 min
-const deliveryWarnings: string[] = []; // Warnings to inject into next tool response
+const deliveryWarnings: string[] = []; // Warnings to inject into next tool response (max 20)
+const MAX_DELIVERY_WARNINGS = 20;
 
 async function checkSentMessageDelivery() {
   const now = Date.now();
@@ -296,7 +297,7 @@ async function checkSentMessageDelivery() {
         sent.warned = true;
         const warning = `⚠ Message #${sent.messageId} to ${sent.toId} may not have been delivered (sent ${Math.round((now - sent.sentAt) / 1000)}s ago, still unconfirmed)`;
         log(warning);
-        deliveryWarnings.push(warning);
+        if (deliveryWarnings.length < MAX_DELIVERY_WARNINGS) deliveryWarnings.push(warning);
         // Push a self-notification so the sender is interrupted immediately
         try {
           await mcp.notification({
@@ -337,11 +338,11 @@ async function writeBugReport(sent: SentMessage, reason: string, error?: string)
   const timestamp = new Date().toISOString();
   const filename = `${timestamp.replace(/[:.]/g, "-")}_msg${sent.messageId}.md`;
 
-  // Gather diagnostics
+  // Gather diagnostics (best-effort, short timeout — don't block error path)
   let brokerHealth = "unknown";
   let peerList = "unknown";
   try {
-    const health = await fetch(`${BROKER_URL}/health`, { signal: AbortSignal.timeout(2000) });
+    const health = await fetch(`${BROKER_URL}/health`, { signal: AbortSignal.timeout(500) });
     if (health.ok) brokerHealth = JSON.stringify(await health.json());
   } catch {}
   try {

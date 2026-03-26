@@ -641,7 +641,7 @@ async function federationInit(): Promise<void> {
   try {
     await brokerFetch<{ ok: boolean }>("/health");
     // Broker is running — kill it so it restarts with federation
-    const killProc = Bun.spawnSync(["pkill", "-f", "broker.ts"], { stdout: "ignore", stderr: "ignore" });
+    const killProc = Bun.spawnSync(["pkill", "-f", "bun.*src/broker.ts"], { stdout: "ignore", stderr: "ignore" });
     console.log(`  ${step++}. OK  Broker restarted with federation enabled`);
   } catch {
     console.log(`  ${step++}. OK  Broker not running (will start with federation on next session)`);
@@ -770,7 +770,7 @@ async function federationJoin(cptUrl: string): Promise<void> {
 
   // 4. Kill broker to restart
   try {
-    Bun.spawnSync(["pkill", "-f", "broker.ts"], { stdout: "ignore", stderr: "ignore" });
+    Bun.spawnSync(["pkill", "-f", "bun.*src/broker.ts"], { stdout: "ignore", stderr: "ignore" });
     console.log(`  4. OK  Broker restarted`);
   } catch {
     console.log(`  4. OK  Broker not running (will start on next session)`);

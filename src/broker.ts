@@ -859,9 +859,10 @@ async function handleFederationConnect(body: FederationConnectRequest): Promise<
 function autoReconnectRemote(host: string, port: number, label?: string) {
   const key = `${host}:${port}`;
   const delays = [0, 5000, 15000, 45000]; // then 60s forever
+  let attemptNum = 0;
 
-  async function attempt(n: number) {
-    const delay = n < delays.length ? delays[n] : 60000;
+  async function attempt() {
+    const delay = attemptNum < delays.length ? delays[attemptNum] : 60000;
     if (delay > 0) await new Promise(r => setTimeout(r, delay));
 
     if (remoteMachines.has(key)) {
@@ -872,19 +873,21 @@ function autoReconnectRemote(host: string, port: number, label?: string) {
     try {
       const result = await handleFederationConnect({ host, port });
       if (result.ok) {
-        federationLog(`Auto-reconnected to ${key} (${result.hostname ?? label ?? "unknown"}) on attempt ${n + 1}`);
+        federationLog(`Auto-reconnected to ${key} (${result.hostname ?? label ?? "unknown"}) on attempt ${attemptNum + 1}`);
         return;
       }
-      federationLog(`Auto-reconnect to ${key} attempt ${n + 1} failed: ${result.error}`);
+      federationLog(`Auto-reconnect to ${key} attempt ${attemptNum + 1} failed: ${result.error}`);
     } catch (e) {
-      federationLog(`Auto-reconnect to ${key} attempt ${n + 1} error: ${e instanceof Error ? e.message : String(e)}`);
+      federationLog(`Auto-reconnect to ${key} attempt ${attemptNum + 1} error: ${e instanceof Error ? e.message : String(e)}`);
     }
 
-    // Schedule next retry
-    attempt(n + 1);
+    // Schedule next retry via setTimeout (not recursion — prevents stack growth)
+    attemptNum++;
+    const nextDelay = attemptNum < delays.length ? delays[attemptNum] : 60000;
+    setTimeout(attempt, nextDelay);
   }
 
-  attempt(0);
+  attempt();
 }
 
 function handleFederationDisconnect(body: { host: string; port: number }): { ok: boolean; error?: string } {

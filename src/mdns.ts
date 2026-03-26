@@ -17,6 +17,8 @@ const DEDUP_COOLDOWN_MS = 5_000;
 const BACKOFF_INITIAL_MS = 30_000;
 const BACKOFF_ESCALATED_MS = 300_000; // 5 minutes
 const MAX_FAILURES = 10;
+const CLEANUP_INTERVAL_MS = 300_000; // Clean stale entries every 5 min
+const DEDUP_STALE_MS = 60_000; // Dedup entries older than 60s are stale
 
 export function pskHash(token: string): string {
   return createHash("sha256").update(token).digest("hex").slice(0, 8);
@@ -40,6 +42,7 @@ export class MdnsManager {
   private bonjour: any = null;
   private browser: any = null;
   private service: any = null;
+  private cleanupTimer: ReturnType<typeof setInterval> | null = null;
   private localPskHash: string;
   private dedupMap = new Map<string, number>(); // host:port -> last attempt timestamp
   private backoffMap = new Map<string, BackoffEntry>();
@@ -99,7 +102,9 @@ export class MdnsManager {
       this.browser = this.bonjour.find({ type: SERVICE_TYPE, protocol: PROTOCOL });
 
       this.browser.on("up", (service: any) => {
-        this.handleServiceUp(service);
+        this.handleServiceUp(service).catch(e => {
+          federationLog(`mDNS: handleServiceUp error: ${e instanceof Error ? e.message : String(e)}`);
+        });
       });
 
       this.browser.on("down", (service: any) => {
@@ -111,9 +116,25 @@ export class MdnsManager {
       // Still mark as active — advertisement may work even if browsing fails
     }
 
+    // Periodic cleanup of stale dedup/backoff entries
+    this.cleanupTimer = setInterval(() => this.cleanupStaleMaps(), CLEANUP_INTERVAL_MS);
+    if (this.cleanupTimer.unref) this.cleanupTimer.unref();
+
     this._state = "active";
     this._reason = undefined;
     return true;
+  }
+
+  private cleanupStaleMaps() {
+    const now = Date.now();
+    // Clean stale dedup entries (older than 60s)
+    for (const [key, ts] of this.dedupMap) {
+      if (now - ts > DEDUP_STALE_MS) this.dedupMap.delete(key);
+    }
+    // Clean backoff entries that have given up (no longer useful)
+    for (const [key, entry] of this.backoffMap) {
+      if (entry.failures >= MAX_FAILURES) this.backoffMap.delete(key);
+    }
   }
 
   private async handleServiceUp(service: any) {
@@ -205,6 +226,10 @@ export class MdnsManager {
   }
 
   stop() {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
     if (this.service) {
       federationLog("mDNS: un-publishing service");
       try { this.service.stop?.(); } catch {}
