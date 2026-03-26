@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-03-26
+
+### Changed
+- **Simplified delivery model**: Stripped deferred ack system (-279 lines). Messages now push once, ack immediately, dedup via Set, with `check_messages` as fallback. Removed: pending buffers, delivery warnings, sender tracking, bug reports, piggyback inbox, retry push — all caused cascading problems (duplicates, spam, constant pinging).
+- **Deterministic peer IDs**: Peer IDs are now SHA-256 hashes of TTY, stable across `/mcp` reconnects. Messages sent to an old ID still arrive after reconnect.
+- **Per-poll peer fetch**: Sender info fetched once per poll cycle with `scope: "lan"` instead of per-message with `scope: "machine"`. Reduces broker load and includes federated senders.
+
+### Fixed
+- **Duplicate message delivery**: Added permanent `pushedMessageIds` Set with bounded cap (1000). Messages are never pushed twice regardless of ack state or buffer expiry.
+- **Delivery warning spam**: Removed entirely. Warnings fired every second instead of once, and the underlying push unreliability is a Claude Code limitation, not fixable server-side.
+- **Ack scoping**: `/ack-messages` now scopes by `to_id` — peers can only ack their own messages.
+- **Dead peer message bounce**: Broker bounces undelivered messages back to senders when target peer dies, with orphan cleanup on startup.
+- **Dead code cleanup**: Removed all leftover references to removed systems (writeBugReport, SentMessage, FAILURE_LOG_PATH, etc.)
+- **Stale tool descriptions**: Updated `check_messages` and `channel_health` descriptions to match simplified implementation.
+
 ## [0.4.0] - 2026-03-26
 
 ### Added

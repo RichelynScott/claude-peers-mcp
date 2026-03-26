@@ -108,13 +108,11 @@ bun test tests/cli.test.ts         # CLI + auto-summary (17)
 ## Known Issues
 
 - **Bun 1.3.x fetch() + self-signed TLS**: `tls: { rejectUnauthorized: false }` doesn't work. Federation uses `curl -sk` subprocess workaround via `federationFetch()`.
-- **Channel notifications silently dropped by Claude Code**: `mcp.notification()` succeeds but Claude Code may not render the notification (~30-50% of the time). Mitigated by deferred ack, `check_messages` fallback, and sender delivery warnings. Root cause unknown — see `docs/TROUBLESHOOTING.md`.
+- **Channel notifications silently dropped by Claude Code**: `mcp.notification()` succeeds but Claude Code may not render the notification (~30-50% of the time). This is a Claude Code platform limitation — `mcp.notification()` is fire-and-forget per JSON-RPC 2.0 spec. Mitigation: `check_messages` tool as reliable fallback. See `docs/TROUBLESHOOTING.md`.
 - **Channel notifications after /mcp reconnect**: `/mcp` reconnect restores tool access but may not re-establish channel subscriptions. Full session restart required for channel push.
 - **WSL2 mDNS**: mDNS auto-discovery does not work on WSL2 NAT mode (multicast blocked by Hyper-V). Use `federation init` + `federation join` instead. Mirrored mode may work but is unreliable.
 - **Channel push verification is heuristic**: `channel_push: "working"` means a tool call occurred within 10s of startup — it proves session activity, not notification delivery. Treat as best-effort signal.
 
 ## Deferred Optimizations
 
-- **Per-message /list-peers call**: `pollAndPushMessages` calls `/list-peers` for every received message to look up sender name. Should cache sender info to reduce broker load under active messaging.
 - **Config file atomicity**: `addRemoteToConfig`/`removeRemoteFromConfig` do read-modify-write without file locking. Concurrent CLI + broker writes could clobber. Acceptable for single-user use.
-- **In-memory state on MCP restart**: `pendingMessages` and `sentMessages` are lost when the MCP server restarts. Could persist to broker SQLite for durability across restarts.
