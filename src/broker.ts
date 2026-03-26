@@ -558,6 +558,18 @@ function handleUnregister(body: { id: string }): void {
 
 const rateLimits = new Map<string, { count: number; resetAt: number }>();
 
+// --- US-006: Request counting + uptime for /health ---
+
+const BROKER_START_TIME = Date.now();
+let requestsThisMinute = 0;
+let requestsLastMinute = 0;
+
+// Rotate request counter every 60s
+setInterval(() => {
+  requestsLastMinute = requestsThisMinute;
+  requestsThisMinute = 0;
+}, 60_000);
+
 // Clean expired rate limit entries every 60s to prevent unbounded map growth
 setInterval(() => {
   const now = Date.now();
@@ -580,12 +592,20 @@ Bun.serve({
   port: PORT,
   hostname: "127.0.0.1",
   async fetch(req) {
+    requestsThisMinute++;
     const url = new URL(req.url);
     const path = url.pathname;
 
     // /health exempt — always respond (no auth required)
     if (path === "/health") {
-      return Response.json({ status: "ok", peers: (selectAllPeers.all() as Peer[]).length });
+      const pendingCount = (db.query("SELECT COUNT(*) as cnt FROM messages WHERE delivered = 0").get() as { cnt: number }).cnt;
+      return Response.json({
+        status: "ok",
+        peers: (selectAllPeers.all() as Peer[]).length,
+        uptime_ms: Date.now() - BROKER_START_TIME,
+        requests_last_minute: requestsLastMinute,
+        pending_messages: pendingCount,
+      });
     }
 
     // --- Auth check (before rate limiting and body parsing) ---
@@ -630,6 +650,13 @@ Bun.serve({
 
     if (req.method !== "POST") {
       return new Response("claude-peers broker", { status: 200 });
+    }
+
+    // US-002: Cooperative yield for background traffic.
+    // /heartbeat and /poll-messages yield to the event loop before body parsing,
+    // allowing queued /register requests to run first (priority admission).
+    if (path === "/heartbeat" || path === "/poll-messages") {
+      await new Promise(r => setTimeout(r, 0));
     }
 
     try {

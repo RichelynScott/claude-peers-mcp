@@ -44,6 +44,12 @@ const POLL_INTERVAL_MS = 1000;
 const HEARTBEAT_INTERVAL_MS = 15_000;
 const BROKER_SCRIPT = new URL("./broker.ts", import.meta.url).pathname;
 
+// US-003: Configurable startup timeout (env var > config file > default 15s)
+const MIN_STARTUP_TIMEOUT_MS = 3_000;
+const DEFAULT_STARTUP_TIMEOUT_MS = 15_000;
+const REGISTER_MAX_RETRIES = 3;
+const REGISTER_PER_ATTEMPT_TIMEOUT_MS = 5_000;
+
 // --- Auth token (loaded after broker is up) ---
 
 let authToken: string = "";
@@ -97,7 +103,19 @@ async function isBrokerAlive(): Promise<boolean> {
   }
 }
 
-async function ensureBroker(): Promise<void> {
+function resolveStartupTimeout(): number {
+  const config = loadConfig();
+  const envVal = parseInt(process.env.CLAUDE_PEERS_STARTUP_TIMEOUT_MS ?? "", 10);
+  const configVal = config.server?.startup_timeout_ms;
+  let timeout = envVal > 0 ? envVal : (configVal ?? DEFAULT_STARTUP_TIMEOUT_MS);
+  if (timeout < MIN_STARTUP_TIMEOUT_MS) {
+    log(`WARNING: Startup timeout ${timeout}ms is below minimum, clamping to ${MIN_STARTUP_TIMEOUT_MS}ms`);
+    timeout = MIN_STARTUP_TIMEOUT_MS;
+  }
+  return timeout;
+}
+
+async function ensureBroker(timeoutMs: number): Promise<void> {
   if (await isBrokerAlive()) {
     log("Broker already running");
     return;
@@ -129,15 +147,16 @@ async function ensureBroker(): Promise<void> {
   // Unref so this process can exit without waiting for the broker
   proc.unref();
 
-  // Wait for it to come up
-  for (let i = 0; i < 30; i++) {
+  // US-003: Use configurable timeout for broker spawn wait
+  const iterations = Math.ceil(timeoutMs / 200);
+  for (let i = 0; i < iterations; i++) {
     await new Promise((r) => setTimeout(r, 200));
     if (await isBrokerAlive()) {
       log("Broker started");
       return;
     }
   }
-  throw new Error("Failed to start broker daemon after 6 seconds");
+  throw new Error(`Failed to start broker daemon after ${timeoutMs}ms. Check if port ${BROKER_PORT} is in use: lsof -i :${BROKER_PORT}`);
 }
 
 // --- Utility ---
@@ -829,10 +848,20 @@ async function pollAndPushMessages() {
 // --- Startup ---
 
 async function main() {
+  const startupStart = Date.now();
+  const startupTimeout = resolveStartupTimeout();
+  log(`Startup timeout: ${startupTimeout}ms`);
+
+  // US-005: Phase timings
+  const timing: Record<string, number> = {};
+
   // 1. Ensure broker is running
-  await ensureBroker();
+  let t0 = Date.now();
+  await ensureBroker(startupTimeout);
+  timing.broker = Date.now() - t0;
 
   // 1b. Read auth token (broker creates the file on startup)
+  t0 = Date.now();
   try {
     authToken = readTokenSync();
     log(`Auth token loaded from ${TOKEN_PATH}`);
@@ -840,17 +869,21 @@ async function main() {
     log(`Fatal: Token file not found at ${TOKEN_PATH}. Is the broker running?`);
     process.exit(1);
   }
+  timing.token = Date.now() - t0;
 
   // 2. Gather context
+  t0 = Date.now();
   myCwd = process.cwd();
   myGitRoot = await getGitRoot(myCwd);
   const tty = getTty();
+  timing.context = Date.now() - t0;
 
   log(`CWD: ${myCwd}`);
   log(`Git root: ${myGitRoot ?? "(none)"}`);
   log(`TTY: ${tty ?? "(unknown)"}`);
 
   // 3. Generate initial summary via git-based auto-summary (non-blocking, best-effort)
+  t0 = Date.now();
   let initialSummary = "";
   const summaryPromise = (async () => {
     try {
@@ -873,17 +906,76 @@ async function main() {
 
   // Wait briefly for summary, but don't block startup
   await Promise.race([summaryPromise, new Promise((r) => setTimeout(r, 3000))]);
+  timing.summary = Date.now() - t0;
 
-  // 4. Register with broker
-  const reg = await brokerFetch<RegisterResponse>("/register", {
+  // 4. Register with broker (US-001: retry with exponential backoff)
+  t0 = Date.now();
+  const registerBody = {
     pid: process.pid,
     cwd: myCwd,
     git_root: myGitRoot,
     tty,
     summary: initialSummary,
-  });
-  myId = reg.id;
-  log(`Registered as peer ${myId}`);
+  };
+
+  let reg: RegisterResponse | null = null;
+  const retryDelays = [0, 1000, 3000]; // attempt 1 immediate, attempt 2 after 1s, attempt 3 after 3s
+
+  for (let attempt = 1; attempt <= REGISTER_MAX_RETRIES; attempt++) {
+    const delay = retryDelays[attempt - 1] ?? 0;
+    if (delay > 0) {
+      log(`Register attempt ${attempt - 1}/${REGISTER_MAX_RETRIES} failed, retrying in ${delay}ms...`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+
+    try {
+      const res = await fetch(`${BROKER_URL}/register`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${authToken}`,
+        },
+        body: JSON.stringify(registerBody),
+        signal: AbortSignal.timeout(REGISTER_PER_ATTEMPT_TIMEOUT_MS),
+      });
+      if (!res.ok) {
+        const err = await res.text();
+        throw new Error(`HTTP ${res.status}: ${err}`);
+      }
+      reg = await res.json() as RegisterResponse;
+      if (attempt > 1) {
+        log(`Registered as peer ${reg.id} (attempt ${attempt}/${REGISTER_MAX_RETRIES})`);
+      } else {
+        log(`Registered as peer ${reg.id}`);
+      }
+      break;
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      if (attempt === REGISTER_MAX_RETRIES) {
+        // US-004: Graceful error with diagnostics
+        let diagnostics = `Broker URL: ${BROKER_URL}`;
+        try {
+          const healthRes = await fetch(`${BROKER_URL}/health`, { signal: AbortSignal.timeout(1000) });
+          if (healthRes.ok) {
+            const health = await healthRes.json() as { status: string; peers: number };
+            diagnostics += `\nBroker reachable: yes (${health.peers} active peers)`;
+            diagnostics += `\nSuggestion: The broker may be overloaded with ${health.peers} active peers. Try again or run \`bun src/cli.ts kill-broker\` to restart it.`;
+          } else {
+            diagnostics += `\nBroker reachable: yes, but returned HTTP ${healthRes.status}`;
+          }
+        } catch {
+          diagnostics += `\nBroker reachable: no`;
+          diagnostics += `\nSuggestion: Check if the broker is running: \`lsof -i :${BROKER_PORT}\``;
+        }
+        const timingStr = Object.entries(timing).map(([k, v]) => `${k}=${v}ms`).join(", ");
+        log(`Fatal: All ${REGISTER_MAX_RETRIES} registration attempts failed.\nLast error: ${errMsg}\n${diagnostics}\nStartup timing so far: ${timingStr}`);
+        process.exit(1);
+      }
+    }
+  }
+
+  timing.register = Date.now() - t0;
+  myId = reg!.id;
 
   // If summary generation is still running, update it when done
   if (!initialSummary) {
@@ -900,8 +992,15 @@ async function main() {
   }
 
   // 5. Connect MCP over stdio
+  t0 = Date.now();
   await mcp.connect(new StdioServerTransport());
+  timing.mcp = Date.now() - t0;
   log("MCP connected");
+
+  // US-005: Log startup timing summary
+  timing.total = Date.now() - startupStart;
+  const timingStr = Object.entries(timing).map(([k, v]) => `${k}=${v}ms`).join(", ");
+  log(`Startup complete: ${timingStr}`);
 
   // 6. Start polling for inbound messages
   const pollTimer = setInterval(pollAndPushMessages, POLL_INTERVAL_MS);
@@ -956,6 +1055,7 @@ async function main() {
 }
 
 main().catch((e) => {
-  log(`Fatal: ${e instanceof Error ? e.message : String(e)}`);
+  const msg = e instanceof Error ? e.message : String(e);
+  log(`Fatal startup error: ${msg}`);
   process.exit(1);
 });

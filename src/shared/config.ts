@@ -24,6 +24,9 @@ export interface PeersConfig {
     port?: number;
     subnet?: string;
   };
+  server?: {
+    startup_timeout_ms?: number;
+  };
 }
 
 /**
