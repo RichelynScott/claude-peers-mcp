@@ -227,11 +227,14 @@ let channelPushVerified = false;
 interface PendingMessage {
   msg: Message;
   pushedAt: number;
+  pushAttempts: number;
+  lastPushAt: number;
 }
 
 const pendingMessages = new Map<number, PendingMessage>();
 const MAX_PENDING = 100;
-const OPTIMISTIC_CONFIRM_MS = 120_000; // 120s — must be longer than DELIVERY_CHECK_DELAY_MS (30s) to avoid race
+const PENDING_EXPIRY_MS = 300_000; // 5 min — expire stale pending (not ack, just drop from buffer)
+const RETRY_SCHEDULE_MS = [10_000, 30_000, 60_000]; // Re-push at 10s, 30s, 60s after first push
 
 async function confirmMessages(messageIds: number[], reason: string) {
   if (messageIds.length === 0 || !myId) return;
@@ -246,16 +249,57 @@ async function confirmMessages(messageIds: number[], reason: string) {
   }
 }
 
-async function processOptimisticConfirmations() {
+// Re-push unconfirmed pending messages on a bounded schedule.
+// No optimistic ack — messages are NEVER acked without explicit confirmation
+// (check_messages call, reply_to match). Push is a hint, not a guarantee.
+async function retryPendingPushes() {
   const now = Date.now();
-  const toConfirm: number[] = [];
+  const toExpire: number[] = [];
+
   for (const [id, pending] of pendingMessages) {
-    if (now - pending.pushedAt >= OPTIMISTIC_CONFIRM_MS) {
-      toConfirm.push(id);
+    // Expire very old pending messages (5 min) — remove from buffer but do NOT ack.
+    // Message stays undelivered in broker for check_messages fallback.
+    if (now - pending.pushedAt >= PENDING_EXPIRY_MS) {
+      toExpire.push(id);
+      continue;
+    }
+
+    // Check if it's time for a retry push
+    if (pending.pushAttempts <= RETRY_SCHEDULE_MS.length) {
+      const retryDelay = RETRY_SCHEDULE_MS[pending.pushAttempts - 1] ?? RETRY_SCHEDULE_MS[RETRY_SCHEDULE_MS.length - 1];
+      if (now - pending.lastPushAt >= retryDelay) {
+        try {
+          await mcp.notification({
+            method: "notifications/claude/channel",
+            params: {
+              content: pending.msg.text,
+              meta: {
+                from_id: pending.msg.from_id,
+                from_name: "",
+                from_summary: "",
+                from_cwd: "",
+                type: pending.msg.type || "text",
+                message_id: String(pending.msg.id),
+                ...(pending.msg.sent_at ? { sent_at: pending.msg.sent_at } : {}),
+                ...(pending.msg.metadata ? { metadata: pending.msg.metadata } : {}),
+                ...(pending.msg.reply_to ? { reply_to: String(pending.msg.reply_to) } : {}),
+              },
+            },
+          });
+          pending.pushAttempts++;
+          pending.lastPushAt = now;
+          log(`Re-pushed msg#${id} (attempt ${pending.pushAttempts}/${RETRY_SCHEDULE_MS.length + 1})`);
+        } catch {
+          // Transport error — stop retrying this message
+        }
+      }
     }
   }
-  if (toConfirm.length > 0) {
-    await confirmMessages(toConfirm, "optimistic-timeout");
+
+  // Expire old pending messages (remove from buffer, NOT from broker)
+  for (const id of toExpire) {
+    pendingMessages.delete(id);
+    log(`Pending msg#${id} expired from buffer (5min) — still unacked in broker for check_messages`);
   }
 }
 
@@ -571,6 +615,32 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     brokerFetch("/set-channel-push", { id: myId, status: "working" }).catch(() => {});
   }
 
+  // Piggyback inbox: if there are pending inbound messages, confirm them on this
+  // reliable request/response path and append a notice to the tool response.
+  // This is the key reliability mechanism — push is a hint, tool responses are the guarantee.
+  let inboxNotice = "";
+  if (pendingMessages.size > 0 && name !== "check_messages") {
+    const pendingMsgs = [...pendingMessages.values()].map(p => p.msg);
+    const allIds = pendingMsgs.map(m => m.id);
+    await confirmMessages(allIds, "piggyback-on-tool-call");
+    const count = pendingMsgs.length;
+    const previews = pendingMsgs.slice(0, 3).map(m => {
+      const from = m.from_id;
+      const preview = m.text.slice(0, 80) + (m.text.length > 80 ? "..." : "");
+      return `  From ${from}: ${preview}`;
+    }).join("\n");
+    const more = count > 3 ? `\n  (${count - 3} more — call check_messages for full content)` : "";
+    inboxNotice = `\n\n📬 ${count} message(s) received while channel push was unreliable:\n${previews}${more}`;
+  }
+
+  // Helper to append inbox notice to any tool response
+  function appendInbox(result: { content: Array<{ type: string; text: string }>; isError?: boolean }) {
+    if (inboxNotice && result.content?.[0]?.type === "text") {
+      result.content[0].text += inboxNotice;
+    }
+    return result;
+  }
+
   switch (name) {
     case "list_peers": {
       const scope = (args as { scope: string }).scope as "machine" | "directory" | "repo" | "lan";
@@ -587,7 +657,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
             content: [
               {
                 type: "text" as const,
-                text: `No other Claude Code instances found (scope: ${scope}).`,
+                text: `No other Claude Code instances found (scope: ${scope}).${inboxNotice}`,
               },
             ],
           };
@@ -612,7 +682,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           content: [
             {
               type: "text" as const,
-              text: `Found ${peers.length} peer(s) (scope: ${scope}):\n\n${lines.join("\n\n")}`,
+              text: `Found ${peers.length} peer(s) (scope: ${scope}):\n\n${lines.join("\n\n")}${inboxNotice}`,
             },
           ],
         };
@@ -720,7 +790,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           deliveryWarnings.length = 0;
         }
         return {
-          content: [{ type: "text" as const, text: responseText }],
+          content: [{ type: "text" as const, text: responseText + inboxNotice }],
         };
       } catch (e) {
         // Task B: Auto bug report on send failure
@@ -1070,7 +1140,7 @@ async function pollAndPushMessages() {
         // This preserves the deferred ack contract: never ack without confirmation.
         log(`Pending buffer full (${MAX_PENDING}), skipping msg#${msg.id} — will re-poll from broker`);
       } else {
-        pendingMessages.set(msg.id, { msg, pushedAt: Date.now() });
+        pendingMessages.set(msg.id, { msg, pushedAt: Date.now(), pushAttempts: 1, lastPushAt: Date.now() });
       }
 
       // Full message log for observability (stderr + file)
@@ -1094,8 +1164,8 @@ async function pollAndPushMessages() {
       }
     }
 
-    // Process optimistic confirmations: ack messages pending > 30s
-    await processOptimisticConfirmations();
+    // Retry pending pushes on bounded schedule (no optimistic ack)
+    await retryPendingPushes();
 
     // Task A: Check delivery status of sent messages
     await checkSentMessageDelivery();
