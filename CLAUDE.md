@@ -58,6 +58,7 @@ claude
 bun src/cli.ts status              # broker status + all peers
 bun src/cli.ts peers               # list peers
 bun src/cli.ts send <id> <msg>     # send message
+bun src/cli.ts reload-broker       # hot-reload broker config (SIGHUP)
 bun src/cli.ts kill-broker         # stop broker daemon
 bun src/cli.ts federation init     # one-command federation setup
 bun src/cli.ts federation join <cpt-url>  # join via connection URL

@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-03-26
+
+### Added
+- **SIGHUP hot-reload for broker config**: Broker re-reads auth token and persistent config file on SIGHUP without dropping connections or requiring `/mcp` reconnect. Uses `Bun.serve().reload()` to swap fetch handler in-place. (`e9af8f6`)
+- **`reload-broker` CLI command**: Finds broker PID via lsof, sends SIGHUP, reports success with peer count. (`e9af8f6`)
+
+### Fixed
+- **Federation relay validation (security)**: Federation `/relay` endpoint now validates metadata is a plain object (not array), enforces 10KB combined size limit (text + metadata), and uses the shared `VALID_MESSAGE_TYPES` set — same rules as `/send-message`. Previously a malicious federated peer could relay oversized or malformed messages. (`9375f11`)
+- **Zombie test broker cleanup**: All 4 test files now force-kill any process holding their test port in `beforeAll`, preventing cascading failures from interrupted test runs. (`b1b9bee`)
+
 ## [0.4.1] - 2026-03-26
 
 ### Changed

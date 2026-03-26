@@ -170,6 +170,7 @@ Run from the project directory with `bun src/cli.ts <command>`:
 | `set-name <id> <name>` | Set a peer's session name |
 | `auto-summary <id>` | Generate and set a deterministic git-based summary |
 | `rotate-token` | Rotate the bearer auth token |
+| `reload-broker` | Hot-reload broker config via SIGHUP (no restart needed) |
 | `restart` | Kill broker + all MCP servers, restart cleanly |
 | `kill-broker` | Stop the broker daemon |
 | `federation init` | One-command setup (config, certs, firewall, join URL) |
@@ -255,7 +256,7 @@ All local communication (server-to-broker, CLI-to-broker) uses bearer token auth
 | Layer | Mechanism |
 |-------|-----------|
 | **Local auth** | Bearer token (`~/.claude-peers-token`, auto-generated). All broker POST endpoints require it. |
-| **Token rotation** | Send `SIGHUP` to the broker to reload the token file without restart. |
+| **Hot reload** | Send `SIGHUP` (or `bun src/cli.ts reload-broker`) to reload token + config without restart. |
 | **Federation transport** | TLS with self-signed certificates (RSA-2048 for macOS LibreSSL compatibility). |
 | **Federation auth** | Pre-shared key (PSK) in `X-Claude-Peers-PSK` header. Both machines must share `~/.claude-peers-token`. |
 | **Message integrity** | HMAC-SHA256 signing on all federation relay requests. |
