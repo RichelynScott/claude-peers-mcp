@@ -296,6 +296,25 @@ async function checkSentMessageDelivery() {
         const warning = `⚠ Message #${sent.messageId} to ${sent.toId} may not have been delivered (sent ${Math.round((now - sent.sentAt) / 1000)}s ago, still unconfirmed)`;
         log(warning);
         deliveryWarnings.push(warning);
+        // Push a self-notification so the sender is interrupted immediately
+        try {
+          await mcp.notification({
+            method: "notifications/claude/channel",
+            params: {
+              content: warning,
+              meta: {
+                from_id: "system",
+                from_name: "claude-peers",
+                from_summary: "",
+                from_cwd: "",
+                type: "text",
+                message_id: `delivery-warning-${sent.messageId}`,
+              },
+            },
+          });
+        } catch {
+          // Channel push may not be available — warning stays in deliveryWarnings for next tool response
+        }
         // Task B: Auto bug report
         writeBugReport(sent, "unconfirmed_delivery");
       } else {
