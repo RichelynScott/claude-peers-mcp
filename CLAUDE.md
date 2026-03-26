@@ -36,6 +36,31 @@ tasks/                  # PRDs and project planning files
 - **LAN-facing** federation endpoints use PSK auth (`X-Claude-Peers-PSK` header)
 - **Local-facing** endpoints (server.ts, cli.ts) use bearer token auth (`Authorization: Bearer`)
 
+## CRITICAL: Broker Reload After Code Changes
+
+**The broker is a long-running daemon.** Unlike server.ts (restarted by `/mcp`), the broker process persists across MCP reconnects. Code changes to these files require a broker reload to take effect:
+
+| File Changed | Broker Reload Required? | Why |
+|---|---|---|
+| `src/broker-handlers.ts` | **YES** — SIGHUP hot-reload | Handler code runs in the broker process |
+| `src/broker.ts` | **YES** — full restart | State/lifecycle code, SIGHUP won't pick up changes here |
+| `src/server.ts` | No — `/mcp` reconnect is enough | Runs in MCP server process, not broker |
+| `src/shared/types.ts` | **YES if broker types changed** | Interfaces used by both processes |
+| `src/cli.ts` | No | CLI runs as one-shot commands |
+
+**How to reload:**
+```bash
+# Hot-reload (preserves connections, swaps handler code only):
+kill -HUP $(lsof -ti :7899)
+# Or: bun src/cli.ts reload-broker
+
+# Full restart (drops connections, reloads everything):
+bun src/cli.ts kill-broker
+# Broker auto-restarts on next /mcp reconnect
+```
+
+**After committing changes to broker-handlers.ts or broker.ts, ALWAYS reload the live broker.** Do not wait for the user to report that changes aren't working. This has caused repeated issues.
+
 ## MCP Tools
 
 | Tool | Description |
