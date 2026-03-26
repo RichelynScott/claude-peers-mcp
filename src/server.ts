@@ -266,6 +266,7 @@ interface SentMessage {
   toId: string;
   sentAt: number;
   warned: boolean;
+  lastCheckedAt: number;
 }
 
 const sentMessages = new Map<number, SentMessage>();
@@ -285,14 +286,13 @@ async function checkSentMessageDelivery() {
       sentMessages.delete(id);
       continue;
     }
-    // Check unwarned messages older than 30s, and recheck warned ones every 60s for late delivery
-    if (now - sent.sentAt > DELIVERY_CHECK_DELAY_MS) {
-      if (!sent.warned) {
-        toCheck.push(sent);
-      } else if (now - sent.sentAt > DELIVERY_CHECK_DELAY_MS * 2) {
-        // Recheck warned messages — if delivered late, clean up
-        toCheck.push(sent);
-      }
+    // Check unwarned messages older than 30s, and recheck warned ones once after 60s
+    if (!sent.warned && now - sent.sentAt > DELIVERY_CHECK_DELAY_MS) {
+      toCheck.push(sent);
+    } else if (sent.warned && !sent.lastCheckedAt && now - sent.sentAt > DELIVERY_CHECK_DELAY_MS * 2) {
+      // One recheck of warned messages at 60s — if delivered late, clean up
+      sent.lastCheckedAt = now;
+      toCheck.push(sent);
     }
   }
 
@@ -707,6 +707,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
             toId: to_id,
             sentAt: Date.now(),
             warned: false,
+            lastCheckedAt: 0,
           });
         }
 
