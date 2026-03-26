@@ -7,15 +7,17 @@ Peer discovery and messaging MCP for Claude Code instances. Supports LAN federat
 ```
 src/                    # Source code
   broker.ts             # Singleton HTTP daemon (localhost:7899) + SQLite + federation TLS server
-  server.ts             # MCP stdio server (one per Claude Code instance) + channel push
-  cli.ts                # CLI utility for inspecting/managing broker state
+  server.ts             # MCP stdio server (one per Claude Code instance) + channel push + deferred ack
+  cli.ts                # CLI utility (federation init/join/doctor/refresh-wsl2)
   federation.ts         # TLS cert gen, HMAC signing, subnet utils, curl-based TLS fetch
+  mdns.ts               # mDNS auto-discovery via bonjour-service
   index.ts              # Entry point
   shared/
     types.ts            # All TypeScript interfaces
     token.ts            # Shared token file reader for auth
     summarize.ts        # Deterministic git-based auto-summary (no external APIs)
-tests/                  # Test suites (100 tests, 302 assertions)
+    config.ts           # Config file reader/writer (~/.claude-peers-config.json)
+tests/                  # Test suites (100 tests, 308 assertions)
   broker.test.ts        # Broker + federation endpoint tests (43 tests)
   cli.test.ts           # CLI + auto-summary tests (17 tests)
   server.test.ts        # MCP server integration tests (18 tests)
@@ -38,11 +40,13 @@ tasks/                  # PRDs and project planning files
 | Tool | Description |
 |------|-------------|
 | `list_peers(scope)` | Discover peers. Scope: machine/directory/repo/lan |
-| `send_message(to_id, text, type?, metadata?, reply_to?)` | Send message to peer. Remote peers use `hostname:peer_id` format |
+| `send_message(to_id, text, type?, metadata?, reply_to?)` | Send message to peer. Remote peers use `hostname:peer_id` format. Tracks delivery. |
 | `broadcast_message(message, scope)` | Send to all peers in scope (machine/directory/repo/lan) |
 | `set_name(name)` | Set session name (from /rename) |
 | `set_summary(summary)` | Set work summary visible to peers |
-| `check_messages()` | Diagnostic tool — without channel push, messages are auto-consumed by the MCP server before Claude sees them |
+| `check_messages()` | Returns unconfirmed pushed messages + new broker messages. Real fallback when channel push isn't working. |
+| `message_status(message_id)` | Check delivery status of a previously sent message |
+| `channel_health()` | Diagnose messaging health: broker status, pending messages, delivery failures |
 
 ## Running
 
@@ -55,8 +59,13 @@ bun src/cli.ts status              # broker status + all peers
 bun src/cli.ts peers               # list peers
 bun src/cli.ts send <id> <msg>     # send message
 bun src/cli.ts kill-broker         # stop broker daemon
+bun src/cli.ts federation init     # one-command federation setup
+bun src/cli.ts federation join <cpt-url>  # join via connection URL
+bun src/cli.ts federation token    # generate join URL
+bun src/cli.ts federation doctor   # diagnose federation health
 bun src/cli.ts federation status   # federation state
 bun src/cli.ts federation connect <host>:<port>  # connect to remote
+bun src/cli.ts federation refresh-wsl2  # update WSL2 port forwarding
 ```
 
 ## Observability
@@ -75,9 +84,11 @@ Default to Bun, not Node.js.
 ## Testing
 
 ```bash
-bun test                    # All 100 tests
-bun test tests/broker.test.ts    # Broker only
-bun test tests/federation.test.ts # Federation only
+bun test                           # All 100 tests, 308 assertions
+bun test tests/broker.test.ts      # Broker + federation endpoints (43)
+bun test tests/server.test.ts      # MCP server integration (18)
+bun test tests/federation.test.ts  # Federation TLS/PSK/HMAC (22)
+bun test tests/cli.test.ts         # CLI + auto-summary (17)
 ```
 
 ## Key Files
@@ -85,15 +96,17 @@ bun test tests/federation.test.ts # Federation only
 | File | Purpose |
 |------|---------|
 | `CHANGELOG.md` | Version history |
-| `FYI.md` | Decision journal |
 | `CLAUDE.md` | This file — project instructions |
-| `src/broker.ts` | HTTP server + SQLite + federation TLS |
-| `src/server.ts` | MCP server + channel push |
-| `src/federation.ts` | TLS cert gen, HMAC, subnet, curl fetch |
+| `src/broker.ts` | HTTP server + SQLite + federation TLS + /message-status |
+| `src/server.ts` | MCP server + deferred ack + delivery tracking + channel push |
+| `src/cli.ts` | CLI: init, join, token, doctor, refresh-wsl2, connect, status |
+| `src/mdns.ts` | mDNS auto-discovery via bonjour-service |
+| `src/federation.ts` | TLS cert gen, HMAC, subnet, curl fetch, WSL2 detection |
 | `src/shared/types.ts` | All TypeScript interfaces |
+| `src/shared/config.ts` | Config file reader/writer with remotes/mdns support |
 
 ## Known Issues
 
 - **Bun 1.3.x fetch() + self-signed TLS**: `tls: { rejectUnauthorized: false }` doesn't work. Federation uses `curl -sk` subprocess workaround via `federationFetch()`.
 - **Channel notifications after /mcp reconnect**: `/mcp` reconnect restores tool access but may not re-establish channel subscriptions. Full session restart required for channel push.
-- **Zombie MCP servers**: Fixed in v0.3.0 with parent death detection + TTY-based eviction.
+- **WSL2 mDNS**: mDNS auto-discovery does not work on WSL2 NAT mode (multicast blocked by Hyper-V). Use `federation init` + `federation join` instead. Mirrored mode may work but is unreliable.

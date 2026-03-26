@@ -84,13 +84,29 @@ This calls `set_name` automatically, so other peers see "AUTH_WORKER" instead of
 
 Federation lets claude-peers instances on different machines discover and message each other over your local network.
 
-### Setup wizard (recommended)
-
-The guided wizard detects your platform (WSL2, macOS, Linux) and walks you through firewall rules, port forwarding, and token sharing:
+### One-command setup (recommended)
 
 ```bash
-bun src/cli.ts federation setup
+bun src/cli.ts federation init     # configures everything locally, outputs a join URL
 ```
+
+On the second machine, use the join URL:
+
+```bash
+bun src/cli.ts federation join cpt://192.168.1.100:7900/dGhpcyBpcyBhIHRlc3Q
+```
+
+That's it. Federation auto-reconnects on broker restart. Use `federation doctor` to verify:
+
+```bash
+bun src/cli.ts federation doctor   # checks every prerequisite, reports pass/fail
+```
+
+### mDNS auto-discovery
+
+When federation is enabled, brokers advertise a `_claude-peers._tcp` service on the LAN via mDNS/Bonjour. Machines with matching PSK tokens auto-connect within 60 seconds -- no manual `federation connect` needed. mDNS is opt-out (disable with `federation.mdns.enabled: false` in config).
+
+**Note:** mDNS does not work on WSL2 NAT mode (multicast is blocked by Hyper-V). Use `federation init` + `federation join` instead.
 
 ### Manual setup
 
@@ -112,7 +128,7 @@ bun src/cli.ts federation setup
 
 4. Connect: `bun src/cli.ts federation connect <remote-ip>:7900`
 
-Once connected, `list_peers(scope="lan")` returns peers from all federated machines, and `send_message` works across machines using the `hostname:peer_id` format.
+Once connected, `list_peers(scope="lan")` returns peers from all federated machines, and `send_message` works across machines using the `hostname:peer_id` format. Connections persist to the config file and auto-reconnect on broker restart.
 
 ## MCP Tools
 
@@ -121,11 +137,13 @@ These tools are available to Claude Code when the MCP server is running:
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `list_peers` | `scope`: machine / directory / repo / lan | Discover other Claude Code sessions. Returns ID, name, PID, working directory, git root, summary, and timestamps. |
-| `send_message` | `to_id`, `text`, `type?`, `metadata?`, `reply_to?` | Send a message to a peer. Remote peers use `hostname:peer_id` format. Supports threading via `reply_to`. |
+| `send_message` | `to_id`, `text`, `type?`, `metadata?`, `reply_to?` | Send a message to a peer. Remote peers use `hostname:peer_id` format. Supports threading via `reply_to`. Tracks delivery and warns if unconfirmed after 30s. |
 | `broadcast_message` | `message`, `scope` | Send a message to all peers in the given scope (machine / directory / repo / lan). |
 | `set_name` | `name` | Set a human-readable session name (e.g., from `/rename`). Visible to peers in discovery. |
 | `set_summary` | `summary` | Set a work summary visible to peers. Convention: prefix with `[SessionName]`. |
-| `check_messages` | *(none)* | Diagnostic tool for checking message state. Note: without channel push enabled, the MCP server auto-consumes messages before Claude can see them. See [Troubleshooting](docs/TROUBLESHOOTING.md). |
+| `check_messages` | *(none)* | Check for messages. Returns unconfirmed pushed messages AND new broker messages. Real fallback when channel push isn't working. |
+| `message_status` | `message_id` | Check delivery status of a previously sent message by its ID. |
+| `channel_health` | *(none)* | Diagnose messaging health: broker status, pending messages, delivery failures, and channel push state. |
 
 ### Message types
 
@@ -152,23 +170,38 @@ Run from the project directory with `bun src/cli.ts <command>`:
 | `set-name <id> <name>` | Set a peer's session name |
 | `restart` | Kill broker + all MCP servers, restart cleanly |
 | `kill-broker` | Stop the broker daemon |
-| `federation setup` | Guided setup wizard (WSL2 / macOS / Linux) |
-| `federation connect <host>:<port>` | Connect to a remote broker |
-| `federation disconnect <host>:<port>` | Disconnect from a remote broker |
+| `federation init` | One-command setup (config, certs, firewall, join URL) |
+| `federation join <cpt-url>` | Join a federation using a `cpt://` URL |
+| `federation token` | Generate a `cpt://` URL for other machines to join |
+| `federation doctor` | Diagnose federation health (checks all prerequisites) |
+| `federation connect <host>:<port>` | Connect to a remote broker (persists to config) |
+| `federation disconnect <host>:<port>` | Disconnect (removes from config) |
 | `federation status` | Show federation state and connected remotes |
+| `federation refresh-wsl2` | Update WSL2 port forwarding if IP changed |
+| `federation enable [port] [subnet]` | Enable federation in config file |
+| `federation disable` | Disable federation in config file |
 
 ## Configuration
 
 ### Config file
 
-`~/.claude-peers-config.json` -- persistent configuration. Created automatically by the federation setup wizard.
+`~/.claude-peers-config.json` -- persistent configuration. Created automatically by `federation init`.
 
 ```json
 {
   "federation": {
     "enabled": true,
     "port": 7900,
-    "subnet": "192.168.1.0/24"
+    "subnet": "192.168.1.0/24",
+    "remotes": [
+      { "host": "192.168.1.42", "port": 7900, "label": "rafi-macbook" }
+    ],
+    "mdns": {
+      "enabled": true
+    }
+  },
+  "server": {
+    "startup_timeout_ms": 15000
   }
 }
 ```
@@ -187,6 +220,8 @@ Environment variables override config file values.
 | `CLAUDE_PEERS_FEDERATION_SUBNET` | auto-detected | Allowed CIDR range for federation connections |
 | `CLAUDE_PEERS_FEDERATION_CERT` | `~/.claude-peers-federation.crt` | TLS certificate path |
 | `CLAUDE_PEERS_FEDERATION_KEY` | `~/.claude-peers-federation.key` | TLS private key path |
+| `CLAUDE_PEERS_STARTUP_TIMEOUT_MS` | `15000` | MCP server startup timeout (ms, min 3000) |
+| `CLAUDE_PEERS_MDNS_ENABLED` | `true` | Enable/disable mDNS auto-discovery |
 
 ## Architecture
 
@@ -234,15 +269,16 @@ All local communication (server-to-broker, CLI-to-broker) uses bearer token auth
 claude-peers-mcp/
   src/
     broker.ts              # HTTP broker daemon + SQLite + federation TLS server
-    server.ts              # MCP stdio server + channel push notifications
-    cli.ts                 # CLI utility
+    server.ts              # MCP stdio server + channel push + deferred ack
+    cli.ts                 # CLI utility (federation init/join/doctor/refresh-wsl2)
     federation.ts          # TLS cert generation, HMAC signing, subnet filtering
+    mdns.ts                # mDNS auto-discovery via bonjour-service
     index.ts               # Package entry point
     shared/
       types.ts             # TypeScript interfaces
       token.ts             # Shared bearer token reader
       summarize.ts         # Deterministic git-based auto-summary
-      config.ts            # Config file reader (~/.claude-peers-config.json)
+      config.ts            # Config file reader/writer (~/.claude-peers-config.json)
   tests/
     broker.test.ts         # Broker + federation endpoint tests (43 tests)
     server.test.ts         # MCP server integration tests (18 tests)
@@ -257,7 +293,7 @@ claude-peers-mcp/
 
 ## Testing
 
-100 tests, 302 assertions.
+100 tests, 308 assertions.
 
 ```bash
 bun test                           # Run all tests
@@ -291,18 +327,23 @@ This is a fork of [louislva/claude-peers-mcp](https://github.com/louislva/claude
 | Feature | Description |
 |---------|-------------|
 | LAN federation | Cross-machine peer discovery and messaging with TLS, PSK, and HMAC security |
-| Federation CLI | Setup wizard, connect/disconnect/status commands with WSL2/macOS/Linux support |
+| mDNS auto-discovery | Zero-config peer discovery on LAN via `_claude-peers._tcp` Bonjour service |
+| Federation CLI | `init`, `join`, `doctor`, `token`, `refresh-wsl2`, connect/disconnect with persistence |
+| Deferred ack | Messages not acked until confirmed received — eliminates silent message loss |
+| Delivery tracking | Sender-side delivery confirmation with 30s auto-check and channel push warnings |
+| Startup reliability | 3-attempt retry with backoff, configurable timeout, broker request priority |
 | Structured messages | Message types (text, query, response, handoff, broadcast), JSON metadata, threading |
 | Broadcast messaging | Scoped group messaging to all peers in machine/directory/repo/LAN |
 | Bearer token auth | Auto-generated token on all broker endpoints with SIGHUP rotation |
 | Session naming | `set_name` tool and CLI command, `from_name` in channel push metadata |
 | Auto-summary | Deterministic git-based summaries (no external API dependencies) |
-| Config file | `~/.claude-peers-config.json` for persistent settings |
+| Config file | `~/.claude-peers-config.json` with federation, remotes, mDNS, server settings |
+| Diagnostics | `channel_health` MCP tool, `message_status` tool, auto bug reports in `BUG_REPORTS/` |
 | Rate limiting | 60 req/min per IP on message endpoints |
 | Message safeguards | 10KB size limit, 7-day delivered message cleanup |
 | Zombie prevention | Parent death detection + TTY-based eviction for stale MCP servers |
-| Full test suite | 100 tests, 302 assertions across broker, server, federation, and CLI |
-| Observability | Centralized logs in `cpm-logs/`, full message logging, CLI status command |
+| Full test suite | 100 tests, 308 assertions across broker, server, federation, and CLI |
+| Observability | Centralized logs in `cpm-logs/`, delivery failure tracking, CLI status command |
 
 ## License
 

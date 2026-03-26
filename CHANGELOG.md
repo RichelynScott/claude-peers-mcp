@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-03-26
+
+### Added
+- **Deferred ack for channel push reliability** — messages are no longer acked to the broker immediately after `mcp.notification()`. They enter a pending buffer and are only confirmed when evidence of receipt arrives: `check_messages` call, `reply_to` match, or 30s optimistic timeout. Eliminates ~30-50% silent message loss. (`0aef487`)
+- **`check_messages` as a real fallback** — now returns pending (pushed but unconfirmed) messages plus new broker messages, deduplicated. Previously returned empty because messages were already acked. (`0aef487`)
+- **Startup retry logic** — `/register` call wrapped in 3-attempt retry with exponential backoff (0ms, 1s, 3s) and 5s per-attempt timeout. Fixes "Failed to connect" errors with 6+ sessions. (`68dc1ac`)
+- **Configurable startup timeout** — `CLAUDE_PEERS_STARTUP_TIMEOUT_MS` env var and `server.startup_timeout_ms` config (default 15s, min 3s clamp). (`68dc1ac`)
+- **Startup timing instrumentation** — each startup phase timed and logged: `broker=Xms, token=Yms, register=Zms, total=Nms`. (`68dc1ac`)
+- **Graceful startup error messages** — on final failure, probes `/health` for peer count, reports broker reachability, suggests actionable fix. (`68dc1ac`)
+- **Enhanced `/health` endpoint** — returns `uptime_ms`, `requests_last_minute`, and `pending_messages` in addition to existing fields. (`68dc1ac`)
+- **Broker request priority** — `/heartbeat` and `/poll-messages` yield to event loop before body parsing, letting queued `/register` requests run first. (`68dc1ac`)
+- **`federation init`** — one-command setup: config file, certs, token, platform-specific firewall (WSL2/macOS/Linux), broker restart, outputs join URL. Replaces `federation setup` (which remains as alias). (`5c5b49e`)
+- **`federation join <cpt-url>`** — single command to join a federation using a `cpt://host:port/token` URL. Writes token, updates config, generates cert, restarts broker, connects. (`5c5b49e`)
+- **`federation token`** — generates a `cpt://` connection URL for sharing with other machines. (`5c5b49e`)
+- **`federation doctor`** — comprehensive health check: config, token, certs, broker, TLS, LAN IP, connected remotes, config/actual mismatch warnings. (`5c5b49e`)
+- **Auto-reconnect on broker restart** — broker reads `federation.remotes` from config file on startup and reconnects with exponential backoff (0s, 5s, 15s, 45s, then 60s). (`5c5b49e`)
+- **Connect/disconnect persistence** — `federation connect` saves to config file, `federation disconnect` removes. Survives broker restarts. (`5c5b49e`)
+- **`federation refresh-wsl2`** — updates stale port forwarding rules when WSL2 IP changes after reboot. (`54f3a6d`)
+- **WSL2 mirrored networking detection** — reads `.wslconfig` for `networkingMode=mirrored`, skips port forwarding when detected. (`54f3a6d`)
+- **mDNS auto-discovery** — new `src/mdns.ts` module with `MdnsManager`. Advertises `_claude-peers._tcp` service on LAN via `bonjour-service`. Auto-connects when matching PSK hash peers discovered. Backoff logic, dedup, WSL2 graceful degradation. (`1fddddf`)
+- **Sender delivery confirmation** — broker `/message-status` endpoint, `message_status` MCP tool, automatic 30s delivery check with channel push warning to sender. (`1657928`)
+- **Auto bug reports** — on send failure or unconfirmed delivery, writes diagnostics to `BUG_REPORTS/` and `cpm-logs/delivery-failures.log`. (`1657928`)
+- **`channel_health` MCP tool** — diagnostic report: broker status, pending inbound/outbound, delivery warnings, recent failures, bug report count. (`1657928`)
+
+### Fixed
+- **`FEDERATION_ENABLED=false` env var override** — previously only checked for `true`/`1`, now respects `false`/`0` to explicitly disable federation even when config file says enabled. (`1122b72`)
+- **Delivery warning surfacing** — warnings now push a self-notification via channel to interrupt the sender immediately, not just log to stderr. (`4f5546d`)
+- **Better Windows LAN IP detection** — uses default route method (`Get-NetIPConfiguration` with gateway) instead of pattern matching that misses `172.16-31.*` and hits VPN adapters. (`54f3a6d`)
+- **WSL2 subnet warning** — broker logs warning when user sets `CLAUDE_PEERS_FEDERATION_SUBNET` to non-`0.0.0.0/0` on WSL2 (unreliable due to NAT IP rewriting). (`54f3a6d`)
+
+### Dependencies
+- Added `bonjour-service@1.3.0` for mDNS auto-discovery (pure JS, no native addons)
+
 ## [0.3.0] - 2026-03-25
 
 ### Added
