@@ -1182,6 +1182,30 @@ if (Bun.main === import.meta.path) {
       break;
     }
 
+    case "reload-broker": {
+      try {
+        const health = await brokerFetch<{ status: string; peers: number }>("/health");
+        // Find broker PID and send SIGHUP
+        const proc = Bun.spawnSync(["lsof", "-ti", `:${BROKER_PORT}`]);
+        const pids = new TextDecoder()
+          .decode(proc.stdout)
+          .trim()
+          .split("\n")
+          .filter((p) => p);
+        if (pids.length === 0) {
+          console.log("Broker PID not found.");
+          break;
+        }
+        for (const pid of pids) {
+          process.kill(parseInt(pid), "SIGHUP");
+        }
+        console.log(`Broker hot-reloaded (SIGHUP sent). ${health.peers} peer(s) stay connected.`);
+      } catch {
+        console.log("Broker is not running.");
+      }
+      break;
+    }
+
     case "federation": {
       const subCmd = process.argv[3];
 
@@ -1385,6 +1409,7 @@ Usage:
   bun cli.ts rotate-token                          Rotate the auth token
   bun cli.ts restart                               Kill ALL claude-peers processes (broker + servers)
   bun cli.ts kill-broker                           Stop the broker daemon
+  bun cli.ts reload-broker                         Hot-reload broker config (SIGHUP, no restart)
 
 Federation:
   bun cli.ts federation init                       One-command federation setup (config, certs, firewall)

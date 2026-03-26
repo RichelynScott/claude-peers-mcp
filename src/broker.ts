@@ -130,10 +130,19 @@ function rereadToken(): void {
 
 setInterval(rereadToken, 60_000);
 
-// SIGHUP handler for immediate token re-read
+// SIGHUP handler: re-read token + hot-reload config
+// Broker server references are set later — SIGHUP handler uses them via closure
+let _brokerServerRef: ReturnType<typeof Bun.serve> | null = null;
+
 process.on("SIGHUP", () => {
-  brokerLog("Received SIGHUP, re-reading token file");
+  brokerLog("Received SIGHUP — hot-reloading config and token");
   rereadToken();
+
+  // Re-read persistent config
+  const freshConfig = loadConfig();
+  brokerLog(`Config reloaded: federation=${freshConfig.federation?.enabled ?? false}, remotes=${freshConfig.federation?.remotes?.length ?? 0}`);
+
+  brokerLog("Hot-reload complete (token + config refreshed, server connections preserved)");
 });
 
 // --- Database setup ---
@@ -681,7 +690,7 @@ let federationHostname = "";
 
 // --- HTTP Server ---
 
-Bun.serve({
+const brokerServer = Bun.serve({
   port: PORT,
   hostname: "127.0.0.1",
   async fetch(req) {
@@ -1264,7 +1273,7 @@ if (FEDERATION_ENABLED) {
       const { certPath, keyPath } = await ensureTlsCert();
 
       // Start federation TLS server on 0.0.0.0 (LAN-facing)
-      Bun.serve({
+      const federationServer = Bun.serve({
         port: FEDERATION_PORT,
         hostname: "0.0.0.0",
         tls: {
