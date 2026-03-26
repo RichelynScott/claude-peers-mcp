@@ -54,3 +54,7 @@ logs/
 # Internal dev artifacts (PRDs, Ralph JSONs, decision journal)
 tasks/
 FYI.md
+HANDOFF.md
+
+# Internal improvement project PRDs
+IMPROVEMENT_PROJECTS/
