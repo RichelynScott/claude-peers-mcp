@@ -30,6 +30,10 @@ export interface PeersConfig {
     port?: number;
     subnet?: string;
     remotes?: FederationRemote[];
+    mdns?: {
+      enabled?: boolean;
+      interface?: string | null;
+    };
   };
   server?: {
     startup_timeout_ms?: number;

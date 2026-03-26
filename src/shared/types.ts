@@ -131,6 +131,14 @@ export interface RemoteMachine {
   peers: RemotePeer[];
   connected_at: string; // ISO timestamp
   last_sync: string;    // ISO timestamp
+  source: "manual" | "mdns";
+}
+
+export interface MdnsStatus {
+  state: "active" | "disabled";
+  reason?: string;
+  discovered_services: number;
+  auto_connections: number;
 }
 
 export interface FederationHandshakeRequest {

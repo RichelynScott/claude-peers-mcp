@@ -812,6 +812,7 @@ async function handleFederationConnect(body: FederationConnectRequest): Promise<
       peers: remotePeers,
       connected_at: now,
       last_sync: now,
+      source: "manual",
     });
 
     federationLog(`Connected to ${result.hostname} at ${host}:${port} (${remotePeers.length} peers)`);
@@ -1171,6 +1172,32 @@ if (FEDERATION_ENABLED) {
         for (const remote of savedRemotes) {
           autoReconnectRemote(remote.host, remote.port, remote.label);
         }
+      }
+
+      // PRD-003: mDNS auto-discovery (opt-out when federation.mdns.enabled === false)
+      const mdnsEnabled = process.env.CLAUDE_PEERS_MDNS_ENABLED !== "false" &&
+        persistentConfig.federation?.mdns?.enabled !== false;
+      if (mdnsEnabled) {
+        try {
+          const { MdnsManager } = await import("./mdns.ts");
+          const mdnsManager = new MdnsManager({
+            federationPort: FEDERATION_PORT,
+            pskToken: currentToken,
+            localHostname: federationHostname,
+            onPeerDiscovered: (host, port) => handleFederationConnect({ host, port }),
+            remoteMachines,
+          });
+          const started = await mdnsManager.start();
+          if (started) {
+            // Clean up on broker shutdown
+            process.on("SIGINT", () => mdnsManager.stop());
+            process.on("SIGTERM", () => mdnsManager.stop());
+          }
+        } catch (e) {
+          federationLog(`mDNS init failed (non-critical): ${e instanceof Error ? e.message : String(e)}`);
+        }
+      } else {
+        federationLog("mDNS: disabled via config or env var");
       }
     } catch (err) {
       // CRITICAL: Federation failure must not crash the broker
