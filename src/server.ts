@@ -197,6 +197,48 @@ let myId: PeerId | null = null;
 let myCwd = process.cwd();
 let myGitRoot: string | null = null;
 
+// --- Deferred ack: pending confirmation buffer (US-001) ---
+// Messages pushed via channel notification but not yet confirmed as received by Claude Code.
+// Only acked to broker when confirmation evidence arrives:
+//   1. Claude calls check_messages (explicit read)
+//   2. Claude calls send_message with reply_to referencing a pending msg
+//   3. Optimistic timeout (30s) expires without transport error
+
+interface PendingMessage {
+  msg: Message;
+  pushedAt: number;
+}
+
+const pendingMessages = new Map<number, PendingMessage>();
+const MAX_PENDING = 100;
+const OPTIMISTIC_CONFIRM_MS = 30_000; // 30s
+
+async function confirmMessages(messageIds: number[], reason: string) {
+  if (messageIds.length === 0 || !myId) return;
+  log(`Confirming ${messageIds.length} message(s) (reason: ${reason}): [${messageIds.join(", ")}]`);
+  try {
+    await brokerFetch("/ack-messages", { id: myId, message_ids: messageIds });
+    for (const id of messageIds) {
+      pendingMessages.delete(id);
+    }
+  } catch (e) {
+    log(`Confirm-ack failed (reason: ${reason}), will retry: ${e instanceof Error ? e.message : String(e)}`);
+  }
+}
+
+async function processOptimisticConfirmations() {
+  const now = Date.now();
+  const toConfirm: number[] = [];
+  for (const [id, pending] of pendingMessages) {
+    if (now - pending.pushedAt >= OPTIMISTIC_CONFIRM_MS) {
+      toConfirm.push(id);
+    }
+  }
+  if (toConfirm.length > 0) {
+    await confirmMessages(toConfirm, "optimistic-timeout");
+  }
+}
+
 // --- MCP Server ---
 
 const mcp = new Server(
@@ -309,7 +351,7 @@ const TOOLS = [
   {
     name: "check_messages",
     description:
-      "Manually check for new messages from other Claude Code instances. Messages are normally pushed automatically via channel notifications, but you can use this as a fallback.",
+      "Check for messages. Returns any unconfirmed pushed messages AND any new messages from the broker. Use this if channel notifications are not appearing.",
     inputSchema: {
       type: "object" as const,
       properties: {},
@@ -463,6 +505,11 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         } catch {
           // Non-critical
         }
+        // US-001: If reply_to references a pending message, confirm it (reply is proof of receipt)
+        if (reply_to !== undefined && pendingMessages.has(reply_to)) {
+          confirmMessages([reply_to], "reply_to").catch(() => {});
+        }
+
         // Build preview: first line or first 120 chars
         const preview = message.split("\n")[0].slice(0, 120) + (message.length > 120 ? "..." : "");
         return {
@@ -541,13 +588,33 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         };
       }
       try {
+        // US-003: Return pending (pushed but unconfirmed) + new broker messages, deduplicated.
+        // This is the real fallback when channel push isn't working.
+        const pendingMsgs = [...pendingMessages.values()].map(p => p.msg);
+        const pendingIds = new Set(pendingMsgs.map(m => m.id));
+
+        // Poll broker for undelivered messages (includes pending since they're unacked)
         const result = await brokerFetch<PollMessagesResponse>("/poll-messages", { id: myId });
-        if (result.messages.length === 0) {
+
+        // Merge: pending + new broker messages, deduped by message_id
+        const allMessages: Message[] = [...pendingMsgs];
+        for (const m of result.messages) {
+          if (!pendingIds.has(m.id)) {
+            allMessages.push(m);
+          }
+        }
+
+        if (allMessages.length === 0) {
           return {
             content: [{ type: "text" as const, text: "No new messages." }],
           };
         }
-        const lines = result.messages.map((m) => {
+
+        // Model is explicitly reading — confirm all messages as seen
+        const allIds = allMessages.map(m => m.id);
+        await confirmMessages(allIds, "check_messages");
+
+        const lines = allMessages.map((m) => {
           let prefix = "";
           if (m.type === "query") prefix = "[QUERY] ";
           else if (m.type === "response") prefix = `[RESPONSE]${m.reply_to ? ` re: msg#${m.reply_to}` : ""} `;
@@ -564,7 +631,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           content: [
             {
               type: "text" as const,
-              text: `${result.messages.length} new message(s):\n\n${lines.join("\n\n---\n\n")}`,
+              text: `${allMessages.length} new message(s):\n\n${lines.join("\n\n---\n\n")}`,
             },
           ],
         };
@@ -646,12 +713,11 @@ async function pollAndPushMessages() {
 
   try {
     const result = await brokerFetch<PollMessagesResponse>("/poll-messages", { id: myId });
-    if (result.messages.length === 0) return;
-
-    // Two-phase delivery: push notifications first, then ack to broker
-    const ackedIds: number[] = [];
 
     for (const msg of result.messages) {
+      // Skip messages already in pending confirmation buffer (not yet acked, awaiting confirmation)
+      if (pendingMessages.has(msg.id)) continue;
+
       // Look up the sender's info for context
       let fromSummary = "";
       let fromCwd = "";
@@ -676,26 +742,48 @@ async function pollAndPushMessages() {
       // IMPORTANT: Claude Code silently drops notifications with null meta values.
       // Use conditional spread to OMIT optional fields rather than passing null.
       // Also message_id is required for Claude Code to render the notification.
-      await mcp.notification({
-        method: "notifications/claude/channel",
-        params: {
-          content: msg.text,
-          meta: {
-            from_id: msg.from_id,
-            from_name: fromName,
-            from_summary: fromSummary,
-            from_cwd: fromCwd,
-            type: msg.type || "text",
-            message_id: String(msg.id),
-            ...(msg.sent_at ? { sent_at: msg.sent_at } : {}),
-            ...(msg.metadata ? { metadata: msg.metadata } : {}),
-            ...(msg.reply_to ? { reply_to: String(msg.reply_to) } : {}),
+      try {
+        await mcp.notification({
+          method: "notifications/claude/channel",
+          params: {
+            content: msg.text,
+            meta: {
+              from_id: msg.from_id,
+              from_name: fromName,
+              from_summary: fromSummary,
+              from_cwd: fromCwd,
+              type: msg.type || "text",
+              message_id: String(msg.id),
+              ...(msg.sent_at ? { sent_at: msg.sent_at } : {}),
+              ...(msg.metadata ? { metadata: msg.metadata } : {}),
+              ...(msg.reply_to ? { reply_to: String(msg.reply_to) } : {}),
+            },
           },
-        },
-      });
+        });
+      } catch (e) {
+        // Channel push failed (transport disconnected, etc.)
+        // Message stays unacked in broker — will be re-polled next cycle
+        log(`Channel push failed for msg#${msg.id}: ${e instanceof Error ? e.message : String(e)}`);
+        continue;
+      }
 
-      // Notification succeeded — mark for ack
-      ackedIds.push(msg.id);
+      // Deferred ack (US-001): add to pending buffer instead of acking immediately.
+      // Message will be acked when confirmation evidence arrives.
+      if (pendingMessages.size >= MAX_PENDING) {
+        // Buffer full — force-ack oldest to make room
+        let oldestId: number | null = null;
+        let oldestTime = Infinity;
+        for (const [id, pending] of pendingMessages) {
+          if (pending.pushedAt < oldestTime) {
+            oldestTime = pending.pushedAt;
+            oldestId = id;
+          }
+        }
+        if (oldestId !== null) {
+          await confirmMessages([oldestId], "buffer-overflow");
+        }
+      }
+      pendingMessages.set(msg.id, { msg, pushedAt: Date.now() });
 
       // Full message log for observability (stderr + file)
       const senderLabel = fromName || msg.from_id;
@@ -718,15 +806,8 @@ async function pollAndPushMessages() {
       }
     }
 
-    // Phase 2: Ack delivered messages — only after successful notification push
-    if (ackedIds.length > 0) {
-      try {
-        await brokerFetch("/ack-messages", { id: myId, message_ids: ackedIds });
-      } catch (e) {
-        // Ack failed — messages stay undelivered, will retry on next poll (at-least-once)
-        log(`Ack failed, will retry next poll: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
+    // Process optimistic confirmations: ack messages pending > 30s
+    await processOptimisticConfirmations();
   } catch (e) {
     // Broker might be down temporarily, don't crash
     log(`Poll error: ${e instanceof Error ? e.message : String(e)}`);
