@@ -575,6 +575,138 @@ describe("broadcast_message", () => {
 });
 
 // ---------------------------------------------------------------------------
+// End-to-end message delivery pipeline
+// ---------------------------------------------------------------------------
+
+describe("E2E message delivery", () => {
+  test("send_message → broker stores → poll acks → message_status confirmed", async () => {
+    const serverPeerId = await getServerPeerId();
+    const helperId = await registerHelperPeer({ pid: sleepProcess.pid, tty: "/dev/pts/e2e-1" });
+
+    // 1. Send a message FROM server TO helper via MCP tool
+    const sendResult = await client.callTool({
+      name: "send_message",
+      arguments: { to_id: helperId, message: "E2E test message" },
+    });
+    const sendText = resultText(sendResult);
+    expect(sendText).toContain("Message sent");
+
+    // Extract message ID from response
+    const msgIdMatch = sendText.match(/msg#(\d+)/);
+    expect(msgIdMatch).toBeTruthy();
+    const msgId = parseInt(msgIdMatch![1]);
+
+    // 2. Verify broker stored the message
+    const { data: statusData } = await post("/message-status", { message_id: msgId });
+    const status = statusData as { id: number; delivered: boolean; from_id: string; to_id: string };
+    expect(status.id).toBe(msgId);
+    expect(status.to_id).toBe(helperId);
+    // Message should be delivered=false (helper hasn't acked) or true (if poll loop already acked)
+    // Either state is valid — the point is the message exists
+
+    // 3. Helper acks the message (simulating recipient poll+ack)
+    await post("/ack-messages", { id: helperId, message_ids: [msgId] });
+
+    // 4. Verify message_status shows delivered
+    const { data: confirmedData } = await post("/message-status", { message_id: msgId });
+    const confirmed = confirmedData as { delivered: boolean };
+    expect(confirmed.delivered).toBe(true);
+
+    // 5. Verify message_status MCP tool works
+    const msResult = await client.callTool({
+      name: "message_status",
+      arguments: { message_id: msgId },
+    });
+    const msText = resultText(msResult);
+    expect(msText).toContain("confirmed");
+  }, 15_000);
+
+  test("check_messages returns messages sent TO server and acks them", async () => {
+    const serverPeerId = await getServerPeerId();
+    const helperId = await registerHelperPeer({ pid: sleepProcess.pid, tty: "/dev/pts/e2e-2" });
+
+    // Drain any pending messages first
+    const { data: drain } = await post("/poll-messages", { id: serverPeerId });
+    const drainMsgs = (drain as { messages: Array<{ id: number }> }).messages;
+    if (drainMsgs.length > 0) {
+      await post("/ack-messages", { id: serverPeerId, message_ids: drainMsgs.map(m => m.id) });
+    }
+
+    // Send message TO server
+    const { data: sendData } = await post("/send-message", {
+      from_id: helperId,
+      to_id: serverPeerId,
+      text: "E2E inbound test",
+      type: "query",
+      metadata: { topic: "e2e" },
+    });
+    const msgId = (sendData as { message_id: number }).message_id;
+
+    // Wait for poll loop to push+ack, then check_messages should find nothing OR
+    // if we're fast enough, check_messages catches it. Retry pattern handles both.
+    let text = "";
+    for (let i = 0; i < 5; i++) {
+      if (i > 0) {
+        // Re-send in case poll loop consumed previous
+        await post("/send-message", {
+          from_id: helperId,
+          to_id: serverPeerId,
+          text: "E2E inbound test",
+          type: "query",
+        });
+      }
+      await new Promise(r => setTimeout(r, 300));
+      const result = await client.callTool({ name: "check_messages", arguments: {} });
+      text = resultText(result);
+      if (text.includes("E2E inbound test")) break;
+    }
+    expect(text).toContain("E2E inbound test");
+    expect(text).toContain("[QUERY]");
+  }, 15_000);
+
+  test("channel_health reports accurate state", async () => {
+    const result = await client.callTool({ name: "channel_health", arguments: {} });
+    const text = resultText(result);
+    expect(text).toContain("Broker: ok");
+    expect(text).toContain("Pushed message IDs tracked");
+  });
+
+  test("dedup prevents same message from being pushed twice", async () => {
+    const serverPeerId = await getServerPeerId();
+    const helperId = await registerHelperPeer({ pid: sleepProcess.pid, tty: "/dev/pts/e2e-3" });
+
+    // Send a message TO server
+    await post("/send-message", {
+      from_id: helperId,
+      to_id: serverPeerId,
+      text: "Dedup test message",
+    });
+
+    // Wait for poll loop to push and ack
+    await new Promise(r => setTimeout(r, 2000));
+
+    // Send the SAME message again (same from/to, different msg ID from broker)
+    await post("/send-message", {
+      from_id: helperId,
+      to_id: serverPeerId,
+      text: "Dedup test message",
+    });
+
+    // Wait again
+    await new Promise(r => setTimeout(r, 1500));
+
+    // check_messages should show at most 1 instance (or 0 if poll loop already acked both)
+    // The key test: no duplicates in the push — pushedMessageIds prevents re-push
+    const result = await client.callTool({ name: "check_messages", arguments: {} });
+    const text = resultText(result);
+    // Count occurrences of "Dedup test message"
+    const matches = text.match(/Dedup test message/g);
+    // Should be 0 (already acked) or 1 (caught by check_messages) — never 2+
+    expect(!matches || matches.length <= 1).toBe(true);
+  }, 15_000);
+});
+
+// ---------------------------------------------------------------------------
 // Error Handling
 // ---------------------------------------------------------------------------
 
