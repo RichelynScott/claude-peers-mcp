@@ -230,7 +230,7 @@ interface PendingMessage {
 
 const pendingMessages = new Map<number, PendingMessage>();
 const MAX_PENDING = 100;
-const OPTIMISTIC_CONFIRM_MS = 30_000; // 30s
+const OPTIMISTIC_CONFIRM_MS = 120_000; // 120s — must be longer than DELIVERY_CHECK_DELAY_MS (30s) to avoid race
 
 async function confirmMessages(messageIds: number[], reason: string) {
   if (messageIds.length === 0 || !myId) return;
@@ -268,7 +268,7 @@ interface SentMessage {
 }
 
 const sentMessages = new Map<number, SentMessage>();
-const DELIVERY_CHECK_DELAY_MS = 30_000; // Check after 30s
+const DELIVERY_CHECK_DELAY_MS = 30_000; // Sender checks after 30s — must be shorter than OPTIMISTIC_CONFIRM_MS
 const SENT_MESSAGE_TTL_MS = 300_000; // Clean up after 5 min
 const deliveryWarnings: string[] = []; // Warnings to inject into next tool response
 
