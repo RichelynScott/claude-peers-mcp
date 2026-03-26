@@ -234,7 +234,6 @@ interface PendingMessage {
 const pendingMessages = new Map<number, PendingMessage>();
 const MAX_PENDING = 100;
 const PENDING_EXPIRY_MS = 300_000; // 5 min — expire stale pending (not ack, just drop from buffer)
-const RETRY_SCHEDULE_MS = [10_000, 30_000, 60_000]; // Re-push at 10s, 30s, 60s after first push
 
 async function confirmMessages(messageIds: number[], reason: string) {
   if (messageIds.length === 0 || !myId) return;
@@ -249,57 +248,16 @@ async function confirmMessages(messageIds: number[], reason: string) {
   }
 }
 
-// Re-push unconfirmed pending messages on a bounded schedule.
-// No optimistic ack — messages are NEVER acked without explicit confirmation
-// (check_messages call, reply_to match). Push is a hint, not a guarantee.
-async function retryPendingPushes() {
+// Expire old pending messages from buffer. No retry push — retrying the
+// unreliable mcp.notification() just creates duplicates when it partially works.
+// Delivery is guaranteed via piggyback on tool responses (request/response path).
+async function expirePendingMessages() {
   const now = Date.now();
-  const toExpire: number[] = [];
-
   for (const [id, pending] of pendingMessages) {
-    // Expire very old pending messages (5 min) — remove from buffer but do NOT ack.
-    // Message stays undelivered in broker for check_messages fallback.
     if (now - pending.pushedAt >= PENDING_EXPIRY_MS) {
-      toExpire.push(id);
-      continue;
+      pendingMessages.delete(id);
+      log(`Pending msg#${id} expired from buffer (5min) — still unacked in broker for check_messages`);
     }
-
-    // Check if it's time for a retry push
-    if (pending.pushAttempts <= RETRY_SCHEDULE_MS.length) {
-      const retryDelay = RETRY_SCHEDULE_MS[pending.pushAttempts - 1] ?? RETRY_SCHEDULE_MS[RETRY_SCHEDULE_MS.length - 1];
-      if (now - pending.lastPushAt >= retryDelay) {
-        try {
-          await mcp.notification({
-            method: "notifications/claude/channel",
-            params: {
-              content: pending.msg.text,
-              meta: {
-                from_id: pending.msg.from_id,
-                from_name: "",
-                from_summary: "",
-                from_cwd: "",
-                type: pending.msg.type || "text",
-                message_id: String(pending.msg.id),
-                ...(pending.msg.sent_at ? { sent_at: pending.msg.sent_at } : {}),
-                ...(pending.msg.metadata ? { metadata: pending.msg.metadata } : {}),
-                ...(pending.msg.reply_to ? { reply_to: String(pending.msg.reply_to) } : {}),
-              },
-            },
-          });
-          pending.pushAttempts++;
-          pending.lastPushAt = now;
-          log(`Re-pushed msg#${id} (attempt ${pending.pushAttempts}/${RETRY_SCHEDULE_MS.length + 1})`);
-        } catch {
-          // Transport error — stop retrying this message
-        }
-      }
-    }
-  }
-
-  // Expire old pending messages (remove from buffer, NOT from broker)
-  for (const id of toExpire) {
-    pendingMessages.delete(id);
-    log(`Pending msg#${id} expired from buffer (5min) — still unacked in broker for check_messages`);
   }
 }
 
@@ -1170,8 +1128,8 @@ async function pollAndPushMessages() {
       }
     }
 
-    // Retry pending pushes on bounded schedule (no optimistic ack)
-    await retryPendingPushes();
+    // Expire old pending messages (no retry push — causes duplicates)
+    await expirePendingMessages();
 
     // Task A: Check delivery status of sent messages
     await checkSentMessageDelivery();
