@@ -232,7 +232,9 @@ interface PendingMessage {
 }
 
 const pendingMessages = new Map<number, PendingMessage>();
+const pushedMessageIds = new Set<number>(); // Permanent dedup — never push same message twice
 const MAX_PENDING = 100;
+const MAX_PUSHED_IDS = 1000; // Cap the dedup set to prevent unbounded growth
 const PENDING_EXPIRY_MS = 300_000; // 5 min — expire stale pending (not ack, just drop from buffer)
 
 async function confirmMessages(messageIds: number[], reason: string) {
@@ -1044,8 +1046,8 @@ async function pollAndPushMessages() {
     const result = await brokerFetch<PollMessagesResponse>("/poll-messages", { id: myId });
 
     for (const msg of result.messages) {
-      // Skip messages already in pending confirmation buffer (not yet acked, awaiting confirmation)
-      if (pendingMessages.has(msg.id)) continue;
+      // Skip messages already pushed (permanent dedup — never push same message twice)
+      if (pushedMessageIds.has(msg.id) || pendingMessages.has(msg.id)) continue;
 
       // Look up the sender's info for context
       let fromSummary = "";
@@ -1105,6 +1107,17 @@ async function pollAndPushMessages() {
         log(`Pending buffer full (${MAX_PENDING}), skipping msg#${msg.id} — will re-poll from broker`);
       } else {
         pendingMessages.set(msg.id, { msg, pushedAt: Date.now(), pushAttempts: 1, lastPushAt: Date.now() });
+        // Permanent dedup — prevent re-push after expiry from pending buffer
+        pushedMessageIds.add(msg.id);
+        if (pushedMessageIds.size > MAX_PUSHED_IDS) {
+          // Evict oldest IDs (Set iterates in insertion order)
+          const iter = pushedMessageIds.values();
+          for (let i = 0; i < 200; i++) iter.next(); // skip keeping 200
+          // Actually, just clear the oldest half
+          const toKeep = [...pushedMessageIds].slice(-MAX_PUSHED_IDS / 2);
+          pushedMessageIds.clear();
+          for (const id of toKeep) pushedMessageIds.add(id);
+        }
       }
 
       // Full message log for observability (stderr + file)
