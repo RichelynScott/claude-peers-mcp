@@ -1030,6 +1030,25 @@ async function main() {
   timing.register = Date.now() - t0;
   myId = reg!.id;
 
+  // Restore session name from broker (persists across /mcp reconnects)
+  if (reg!.session_name && !mySessionName) {
+    mySessionName = reg!.session_name;
+    log(`Session name restored from broker: "${mySessionName}"`);
+    // Regenerate auto-summary with [SessionName] prefix
+    try {
+      const branch = await getGitBranch(myCwd);
+      const recentFiles = await getRecentFiles(myCwd);
+      const updatedSummary = await generateSummary({
+        cwd: myCwd, git_root: myGitRoot, git_branch: branch,
+        recent_files: recentFiles, session_name: mySessionName,
+      });
+      if (updatedSummary) {
+        await brokerFetch("/set-summary", { id: myId, summary: updatedSummary });
+        log(`Summary regenerated with restored name: ${updatedSummary}`);
+      }
+    } catch { /* Non-critical */ }
+  }
+
   // If summary generation is still running, update it when done
   if (!initialSummary) {
     summaryPromise.then(async () => {

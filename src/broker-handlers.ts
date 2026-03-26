@@ -96,7 +96,7 @@ function handleRegister(ctx: BrokerContext, body: RegisterRequest): RegisterResp
   }
 
   ctx.stmts.insertPeer.run(id, body.pid, body.cwd, body.git_root, body.tty, sessionName, summary, now, now);
-  return { id };
+  return { id, session_name: sessionName || undefined };
 }
 
 function handleListPeers(ctx: BrokerContext, body: ListPeersRequest): Peer[] {

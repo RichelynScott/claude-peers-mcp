@@ -42,6 +42,7 @@ export interface RegisterRequest {
 
 export interface RegisterResponse {
   id: PeerId;
+  session_name?: string;
 }
 
 export interface HeartbeatRequest {
