@@ -184,13 +184,34 @@ try { db.run("ALTER TABLE messages ADD COLUMN reply_to INTEGER DEFAULT NULL"); }
 
 // Clean up stale peers (PIDs that no longer exist) on startup
 function cleanStalePeers() {
-  const peers = db.query("SELECT id, pid FROM peers").all() as { id: string; pid: number }[];
+  const peers = db.query("SELECT id, pid, session_name FROM peers").all() as { id: string; pid: number; session_name: string }[];
   for (const peer of peers) {
     try {
       // Check if process is still alive (signal 0 doesn't kill, just checks)
       process.kill(peer.pid, 0);
     } catch {
-      // Process doesn't exist, remove it
+      // Process doesn't exist — bounce undelivered messages back to senders
+      const orphanedMsgs = db.query(
+        "SELECT id, from_id, text FROM messages WHERE to_id = ? AND delivered = 0"
+      ).all(peer.id) as { id: number; from_id: string; text: string }[];
+
+      if (orphanedMsgs.length > 0) {
+        const peerLabel = peer.session_name || peer.id;
+        const now = new Date().toISOString();
+        for (const msg of orphanedMsgs) {
+          // Check if sender is still alive before bouncing
+          const sender = db.query("SELECT id, pid FROM peers WHERE id = ?").get(msg.from_id) as { id: string; pid: number } | null;
+          if (sender) {
+            try { process.kill(sender.pid, 0); } catch { continue; } // sender also dead, skip
+            const preview = msg.text.slice(0, 100) + (msg.text.length > 100 ? "..." : "");
+            const bounceText = `⚠ Message #${msg.id} to ${peerLabel} could not be delivered — peer has disconnected.\n> ${preview}`;
+            insertMessage.run("system", msg.from_id, bounceText, "text", null, msg.id, now);
+            brokerLog(`Bounced msg#${msg.id} back to ${msg.from_id} (target ${peerLabel} is dead)`);
+          }
+        }
+      }
+
+      // Remove the dead peer and its orphaned messages
       db.run("DELETE FROM peers WHERE id = ?", [peer.id]);
       db.run("DELETE FROM messages WHERE to_id = ? AND delivered = 0", [peer.id]);
     }
