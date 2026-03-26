@@ -220,6 +220,44 @@ function cleanStalePeers() {
 
 cleanStalePeers();
 
+// Clean orphaned messages — messages to peers that no longer exist in the table
+// (can happen if broker restarts and old peers were already cleaned)
+function cleanOrphanedMessages() {
+  const orphaned = db.query(`
+    SELECT m.id, m.from_id, m.to_id, m.text FROM messages m
+    LEFT JOIN peers p ON m.to_id = p.id
+    WHERE m.delivered = 0 AND p.id IS NULL AND m.from_id != 'system'
+  `).all() as { id: number; from_id: string; to_id: string; text: string }[];
+
+  if (orphaned.length === 0) return;
+
+  const now = new Date().toISOString();
+  for (const msg of orphaned) {
+    // Try to bounce to sender if they're still alive
+    const sender = db.query("SELECT id, pid FROM peers WHERE id = ?").get(msg.from_id) as { id: string; pid: number } | null;
+    if (sender) {
+      try {
+        process.kill(sender.pid, 0);
+        const preview = msg.text.slice(0, 100) + (msg.text.length > 100 ? "..." : "");
+        const bounceText = `⚠ Message #${msg.id} to ${msg.to_id} could not be delivered — peer has disconnected.\n> ${preview}`;
+        insertMessage.run("system", msg.from_id, bounceText, "text", null, msg.id, now);
+        brokerLog(`Bounced orphaned msg#${msg.id} back to ${msg.from_id}`);
+      } catch {
+        // Sender also dead — just delete
+      }
+    }
+  }
+
+  // Delete all orphaned messages
+  const orphanedIds = orphaned.map(m => m.id);
+  db.run(`DELETE FROM messages WHERE id IN (${orphanedIds.join(",")})`);
+  brokerLog(`Cleaned ${orphaned.length} orphaned message(s)`);
+}
+
+// Run orphan cleanup after prepared statements are ready (called below after insertMessage is defined)
+// Also run periodically
+setInterval(cleanOrphanedMessages, 30_000);
+
 // Periodically clean stale peers (every 30s)
 setInterval(cleanStalePeers, 30_000);
 
@@ -295,6 +333,9 @@ cleanDeliveredMessages();
 
 // Periodically clean delivered messages (every 60s)
 setInterval(cleanDeliveredMessages, 60_000);
+
+// Run orphaned message cleanup now (prepared statements are ready)
+cleanOrphanedMessages();
 
 // --- Generate peer ID ---
 
