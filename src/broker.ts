@@ -45,6 +45,7 @@ import {
   verifySignature,
   ipInSubnet,
   federationFetch,
+  isWSL2,
 } from "./federation.ts";
 import { loadConfig, addRemoteToConfig, removeRemoteFromConfig } from "./shared/config.ts";
 
@@ -1126,6 +1127,10 @@ if (FEDERATION_ENABLED) {
         federationSubnet = configuredSubnet;
         const source = process.env.CLAUDE_PEERS_FEDERATION_SUBNET ? "env var" : "config file";
         federationLog(`Subnet restriction (${source}): ${federationSubnet}`);
+        // US-001: Warn on WSL2 if subnet is not 0.0.0.0/0 (restrictions unreliable due to NAT IP rewriting)
+        if (isWSL2() && configuredSubnet !== "0.0.0.0/0") {
+          federationLog(`WARNING: Subnet restriction "${configuredSubnet}" on WSL2 may not work — Windows port forwarding rewrites source IPs. Consider using 0.0.0.0/0 and relying on PSK + TLS for security.`);
+        }
       } else {
         federationSubnet = await detectSubnet();
         federationLog(`Subnet restriction (auto-detected): ${federationSubnet}`);

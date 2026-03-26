@@ -466,16 +466,41 @@ async function federationSetupLinux(fedPort: number): Promise<void> {
   console.log(`     bun src/cli.ts federation connect <remote-ip>:${fedPort}`);
 }
 
+// --- Platform detection helpers ---
+
+async function isWSL2(): Promise<boolean> {
+  return !!process.env.WSL_DISTRO_NAME || (await Bun.file("/proc/sys/fs/binfmt_misc/WSLInterop").exists());
+}
+
+async function isWSL2MirroredMode(): Promise<boolean> {
+  // Check .wslconfig for networkingMode=mirrored
+  try {
+    const winUser = new TextDecoder().decode(
+      Bun.spawnSync(["powershell.exe", "-NoProfile", "-Command", "$env:USERNAME"], { stdout: "pipe", stderr: "ignore" }).stdout
+    ).trim();
+    if (winUser) {
+      const wslConfig = await Bun.file(`/mnt/c/Users/${winUser}/.wslconfig`).text();
+      if (/networkingMode\s*=\s*mirrored/i.test(wslConfig)) return true;
+    }
+  } catch {}
+  return false;
+}
+
 // --- Helper: detect LAN IP ---
 async function detectLanIp(): Promise<string | null> {
-  const isWSL2 = !!process.env.WSL_DISTRO_NAME || (await Bun.file("/proc/sys/fs/binfmt_misc/WSLInterop").exists());
-  if (isWSL2) {
-    // On WSL2, get the Windows host LAN IP (not the WSL internal IP)
+  if (await isWSL2()) {
+    // US-004: Use default route method for reliable LAN IP detection on WSL2
     const proc = Bun.spawnSync(["powershell.exe", "-NoProfile", "-Command",
-      "Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -like '192.168.*' -or $_.IPAddress -like '10.*' } | Select-Object -First 1 -ExpandProperty IPAddress"],
+      "(Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway -ne $null } | Select-Object -First 1).IPv4Address.IPAddress"],
       { stdout: "pipe", stderr: "ignore" });
     const ip = new TextDecoder().decode(proc.stdout).trim();
-    return ip || null;
+    if (ip) return ip;
+
+    // Fallback: broader pattern matching (includes 172.16-31.*)
+    const fallback = Bun.spawnSync(["powershell.exe", "-NoProfile", "-Command",
+      "Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -like '192.168.*' -or $_.IPAddress -like '10.*' -or ($_.IPAddress -like '172.*' -and [int]($_.IPAddress.Split('.')[1]) -ge 16 -and [int]($_.IPAddress.Split('.')[1]) -le 31) } | Select-Object -First 1 -ExpandProperty IPAddress"],
+      { stdout: "pipe", stderr: "ignore" });
+    return new TextDecoder().decode(fallback.stdout).trim() || null;
   }
   if (process.platform === "darwin") {
     const proc = Bun.spawnSync(["ipconfig", "getifaddr", "en0"], { stdout: "pipe", stderr: "ignore" });
@@ -487,11 +512,77 @@ async function detectLanIp(): Promise<string | null> {
   return ips.find(ip => ip.startsWith("192.168.") || ip.startsWith("10.")) ?? ips[0] ?? null;
 }
 
+// --- US-003: WSL2 port forwarding refresh ---
+async function refreshWSL2PortForwarding(): Promise<void> {
+  if (!(await isWSL2())) {
+    console.error("Error: This command is only for WSL2 environments.");
+    process.exit(1);
+  }
+
+  if (await isWSL2MirroredMode()) {
+    console.log("WSL2 mirrored networking detected — port forwarding not required.");
+    return;
+  }
+
+  const config = loadConfig();
+  const fedPort = config.federation?.port || parseInt(process.env.CLAUDE_PEERS_FEDERATION_PORT ?? "7900", 10);
+
+  // Get current WSL2 IP
+  const wslIp = new TextDecoder().decode(
+    Bun.spawnSync(["hostname", "-I"], { stdout: "pipe", stderr: "ignore" }).stdout
+  ).trim().split(" ")[0];
+
+  if (!wslIp) {
+    console.error("Error: Could not determine WSL2 IP address.");
+    process.exit(1);
+  }
+
+  // Query existing portproxy rule
+  const showProc = Bun.spawnSync(["powershell.exe", "-NoProfile", "-Command",
+    "netsh interface portproxy show v4tov4"], { stdout: "pipe", stderr: "ignore" });
+  const rules = new TextDecoder().decode(showProc.stdout);
+
+  // Parse: look for our port
+  const portRegex = new RegExp(`0\\.0\\.0\\.0\\s+${fedPort}\\s+(\\S+)\\s+${fedPort}`, "m");
+  const match = rules.match(portRegex);
+
+  if (match) {
+    const currentTarget = match[1];
+    if (currentTarget === wslIp) {
+      console.log(`Port forwarding is current (port ${fedPort} → ${wslIp})`);
+      return;
+    }
+    console.log(`Stale portproxy detected: port ${fedPort} → ${currentTarget} (should be ${wslIp})`);
+    console.log("Updating...");
+  } else {
+    console.log(`No portproxy rule for port ${fedPort}. Creating...`);
+  }
+
+  // Update via elevated PowerShell (delete old + add new)
+  const updateCmd = `Start-Process powershell -ArgumentList '-NoProfile -Command "netsh interface portproxy delete v4tov4 listenport=${fedPort} listenaddress=0.0.0.0 2>$null; netsh interface portproxy add v4tov4 listenport=${fedPort} listenaddress=0.0.0.0 connectport=${fedPort} connectaddress=${wslIp}"' -Verb RunAs -Wait`;
+  Bun.spawnSync(["powershell.exe", "-NoProfile", "-Command", updateCmd], { stdout: "ignore", stderr: "ignore" });
+
+  // Verify
+  await new Promise(r => setTimeout(r, 1000));
+  const verifyProc = Bun.spawnSync(["powershell.exe", "-NoProfile", "-Command",
+    "netsh interface portproxy show v4tov4"], { stdout: "pipe", stderr: "ignore" });
+  const verifyRules = new TextDecoder().decode(verifyProc.stdout);
+  const verifyMatch = verifyRules.match(portRegex);
+
+  if (verifyMatch && verifyMatch[1] === wslIp) {
+    console.log(`OK  Port forwarding updated (port ${fedPort} → ${wslIp})`);
+  } else {
+    console.log(`WARN  Could not verify port forwarding update. You may need admin elevation.`);
+    console.log(`Manual fix: Run in elevated PowerShell:`);
+    console.log(`  netsh interface portproxy add v4tov4 listenport=${fedPort} listenaddress=0.0.0.0 connectport=${fedPort} connectaddress=${wslIp}`);
+  }
+}
+
 // --- US-003: federation init ---
 async function federationInit(): Promise<void> {
-  const isWSL2 = !!process.env.WSL_DISTRO_NAME || (await Bun.file("/proc/sys/fs/binfmt_misc/WSLInterop").exists());
+  const isWSL2Flag = await isWSL2();
   const isMac = process.platform === "darwin";
-  const platform = isWSL2 ? "WSL2" : isMac ? "macOS" : "Linux";
+  const platform = isWSL2Flag ? "WSL2" : isMac ? "macOS" : "Linux";
   const fedPort = parseInt(process.env.CLAUDE_PEERS_FEDERATION_PORT ?? "7900", 10);
 
   console.log(`\n[Federation Init — ${platform} Detected]\n`);
@@ -499,7 +590,7 @@ async function federationInit(): Promise<void> {
 
   // 1. Config file
   const existingConfig = loadConfig();
-  const subnet = isWSL2 ? "0.0.0.0/0" : (existingConfig.federation?.subnet || "0.0.0.0/0");
+  const subnet = isWSL2Flag ? "0.0.0.0/0" : (existingConfig.federation?.subnet || "0.0.0.0/0");
   const newConfig = {
     ...existingConfig,
     federation: {
@@ -530,9 +621,14 @@ async function federationInit(): Promise<void> {
   }
 
   // 4. Platform-specific network setup
-  if (isWSL2) {
-    await federationSetupWSL2(fedPort);
-    step += 2;
+  if (isWSL2Flag) {
+    if (await isWSL2MirroredMode()) {
+      console.log(`  ${step++}. OK  WSL2 mirrored networking detected — port forwarding not required`);
+      step++;
+    } else {
+      await federationSetupWSL2(fedPort);
+      step += 2;
+    }
   } else if (isMac) {
     await federationSetupMacOS(fedPort);
     step += 2;
@@ -1228,6 +1324,11 @@ if (Bun.main === import.meta.path) {
           break;
         }
 
+        case "refresh-wsl2": {
+          await refreshWSL2PortForwarding();
+          break;
+        }
+
         case "enable": {
           const existingConfig = loadConfig();
           const port = parseInt(process.argv[4] || "") || existingConfig.federation?.port || 7900;
@@ -1293,6 +1394,7 @@ Federation:
   bun cli.ts federation connect <host>:<port>      Connect to a remote broker (persists to config)
   bun cli.ts federation disconnect <host>:<port>   Disconnect from a remote broker (removes from config)
   bun cli.ts federation status                     Show federation status
+  bun cli.ts federation refresh-wsl2                Update WSL2 port forwarding if IP changed
   bun cli.ts federation enable [port] [subnet]     Enable federation in config file
   bun cli.ts federation disable                    Disable federation in config file`);
   }

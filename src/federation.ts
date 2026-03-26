@@ -123,7 +123,7 @@ export function ipInSubnet(ip: string, cidr: string): boolean {
  * Detect if running inside WSL2.
  * Checks for WSLInterop binfmt entry or WSL_DISTRO_NAME env var.
  */
-function isWSL2(): boolean {
+export function isWSL2(): boolean {
   if (process.env.WSL_DISTRO_NAME) return true;
   try {
     return existsSync("/proc/sys/fs/binfmt_misc/WSLInterop");
@@ -146,7 +146,7 @@ function isWSL2(): boolean {
 export async function detectSubnet(): Promise<string> {
   // WSL2: subnet auto-detection is fundamentally broken (NAT range != LAN range)
   if (isWSL2()) {
-    federationLog("WSL2 detected — subnet auto-detection unreliable (NAT range != LAN). Defaulting to 0.0.0.0/0 (allow all). Set CLAUDE_PEERS_FEDERATION_SUBNET to restrict.");
+    federationLog("WSL2 detected — subnet set to 0.0.0.0/0 (allow all). Security relies on PSK auth + TLS, not subnet filtering, because Windows port forwarding rewrites source IPs.");
     return "0.0.0.0/0";
   }
 
