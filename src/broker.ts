@@ -1204,10 +1204,19 @@ async function handleFederationRequest(req: Request, server: any): Promise<Respo
           }
         }
 
-        // Insert the relayed message (validate type to prevent injection)
-        const VALID_RELAY_TYPES = new Set(["text", "query", "response", "handoff", "broadcast"]);
-        const msgType = VALID_RELAY_TYPES.has(relayReq.type ?? "text") ? (relayReq.type ?? "text") : "text";
-        const metadataStr = relayReq.metadata ? JSON.stringify(relayReq.metadata) : null;
+        // Validate relayed message — same rules as local /send-message
+        const msgType = VALID_MESSAGE_TYPES.has(relayReq.type ?? "text") ? (relayReq.type ?? "text") : "text";
+        let metadataStr: string | null = null;
+        if (relayReq.metadata != null) {
+          if (typeof relayReq.metadata !== "object" || Array.isArray(relayReq.metadata)) {
+            return Response.json({ ok: false, error: "metadata must be a JSON object" }, { status: 400 });
+          }
+          metadataStr = JSON.stringify(relayReq.metadata);
+        }
+        const totalSize = (relayReq.text?.length ?? 0) + (metadataStr?.length ?? 0);
+        if (totalSize > 10240) {
+          return Response.json({ ok: false, error: "Message too large (text + metadata max 10KB)" }, { status: 400 });
+        }
         const result = insertMessage.run(
           relayReq.from_id, relayReq.to_id, relayReq.text,
           msgType, metadataStr, relayReq.reply_to ?? null, new Date().toISOString()
