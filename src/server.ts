@@ -344,31 +344,35 @@ async function checkSentMessageDelivery() {
     try {
       const status = await brokerFetch<{ delivered: boolean; error?: string }>("/message-status", { message_id: sent.messageId });
       if (!status.delivered) {
-        sent.warned = true;
-        const warning = `⚠ Message #${sent.messageId} to ${sent.toId} may not have been delivered (sent ${Math.round((now - sent.sentAt) / 1000)}s ago, still unconfirmed)`;
-        log(warning);
-        if (deliveryWarnings.length < MAX_DELIVERY_WARNINGS) deliveryWarnings.push(warning);
-        // Push a self-notification so the sender is interrupted immediately
-        try {
-          await mcp.notification({
-            method: "notifications/claude/channel",
-            params: {
-              content: warning,
-              meta: {
-                from_id: "system",
-                from_name: "claude-peers",
-                from_summary: "",
-                from_cwd: "",
-                type: "text",
-                message_id: `delivery-warning-${sent.messageId}`,
+        // Only warn and notify on FIRST detection (not rechecks)
+        if (!sent.warned) {
+          sent.warned = true;
+          const warning = `⚠ Message #${sent.messageId} to ${sent.toId} may not have been delivered (sent ${Math.round((now - sent.sentAt) / 1000)}s ago, still unconfirmed)`;
+          log(warning);
+          if (deliveryWarnings.length < MAX_DELIVERY_WARNINGS) deliveryWarnings.push(warning);
+          // Push ONE self-notification so the sender is interrupted
+          try {
+            await mcp.notification({
+              method: "notifications/claude/channel",
+              params: {
+                content: warning,
+                meta: {
+                  from_id: "system",
+                  from_name: "claude-peers",
+                  from_summary: "",
+                  from_cwd: "",
+                  type: "text",
+                  message_id: `delivery-warning-${sent.messageId}`,
+                },
               },
-            },
-          });
-        } catch {
-          // Channel push may not be available — warning stays in deliveryWarnings for next tool response
+            });
+          } catch {
+            // Channel push may not be available — warning stays in deliveryWarnings for next tool response
+          }
+          // Task B: Auto bug report (once per message)
+          writeBugReport(sent, "unconfirmed_delivery");
         }
-        // Task B: Auto bug report
-        writeBugReport(sent, "unconfirmed_delivery");
+        // Recheck found still undelivered — no action needed, already warned
       } else {
         // Confirmed — clean up
         sentMessages.delete(sent.messageId);
@@ -456,9 +460,11 @@ Available tools:
 - broadcast_message: Send a message to all peers in a scope (machine/directory/repo). Useful for announcements, help requests, or coordination.
 - set_summary: Set a 1-2 sentence summary of what you're working on (visible to other peers)
 - set_name: Set your session name (from /rename). Helps peers identify you by name instead of opaque ID.
-- check_messages: Manually check for new messages
+- check_messages: Check for messages. Channel push notifications are unreliable — call this every few minutes or whenever you suspect messages may have been sent to you. Messages are also surfaced automatically when you call any other tool.
 
-When you start or after using /rename, call set_name with your session name. This helps other instances identify you by name instead of opaque ID. Also call set_summary with [SESSION_NAME] prefix convention: '[MySession] description of work'.`,
+When you start or after using /rename, call set_name with your session name. This helps other instances identify you by name instead of opaque ID. Also call set_summary with [SESSION_NAME] prefix convention: '[MySession] description of work'.
+
+IMPORTANT: Channel push notifications may not always appear. If you are waiting for a reply and it hasn't arrived, call check_messages to retrieve it. Messages sent to you are reliably stored — they just may not trigger a visible notification every time.`,
   }
 );
 
