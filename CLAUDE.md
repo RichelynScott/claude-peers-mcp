@@ -61,6 +61,35 @@ bun src/cli.ts kill-broker
 
 **After committing changes to broker-handlers.ts or broker.ts, ALWAYS reload the live broker.** Do not wait for the user to report that changes aren't working. This has caused repeated issues.
 
+### Which sessions need restart?
+
+Changes propagate differently depending on which process runs the code:
+
+| Change Type | Broker Action | Session Action | Other sessions affected? |
+|---|---|---|---|
+| `broker-handlers.ts` only | SIGHUP (`kill -HUP`) | Nothing — takes effect immediately for all | Yes — all sessions use the same broker |
+| `broker.ts` (state/lifecycle) | Kill + let auto-restart | `/mcp` on one session to trigger respawn | Yes — all sessions use the same broker |
+| `server.ts` only | Nothing | `/mcp` on each session you want updated | No — each session runs its own server.ts |
+| Both broker + server | SIGHUP the broker, then `/mcp` | `/mcp` on sessions you want updated | Broker changes affect all; server.ts changes only affect reconnected sessions |
+
+**You do NOT need to restart all sessions.** Sessions that don't `/mcp` reconnect will still work — they just won't get new server.ts features until they reconnect. Broker changes (SIGHUP or restart) affect all sessions immediately.
+
+### Post-commit checklist
+
+After committing changes, run these steps in order:
+```bash
+# 1. If broker-handlers.ts changed — hot-reload:
+kill -HUP $(lsof -ti :7899)
+
+# 2. If broker.ts changed — full restart:
+bun src/cli.ts kill-broker
+# Then /mcp in any session to trigger auto-respawn
+
+# 3. If server.ts changed — reconnect target sessions:
+# User runs /mcp in each session that needs the update
+# (or restart all 3 if it's a team like CPM_SESH + workers)
+```
+
 ## MCP Tools
 
 | Tool | Description |
