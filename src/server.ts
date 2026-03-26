@@ -643,6 +643,12 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           isError: true,
         };
       }
+      if (!to_id || !message) {
+        return {
+          content: [{ type: "text" as const, text: "Missing required parameter: to_id and message are required" }],
+          isError: true,
+        };
+      }
       try {
         // Detect remote peer: colon in to_id indicates "hostname:peer_id" format
         const isRemotePeer = to_id.includes(":");
@@ -857,6 +863,12 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       if (!myId) {
         return {
           content: [{ type: "text" as const, text: "Not registered with broker yet" }],
+          isError: true,
+        };
+      }
+      if (!message || !scope) {
+        return {
+          content: [{ type: "text" as const, text: "Missing required parameter: message and scope are required" }],
           isError: true,
         };
       }
