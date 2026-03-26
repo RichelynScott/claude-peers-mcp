@@ -7,7 +7,7 @@ Peer discovery and messaging MCP for Claude Code instances. Supports LAN federat
 ```
 src/                    # Source code
   broker.ts             # Singleton HTTP daemon (localhost:7899) + SQLite + federation TLS server
-  server.ts             # MCP stdio server (one per Claude Code instance) + channel push + deferred ack
+  server.ts             # MCP stdio server (one per Claude Code instance) + channel push + simple push-ack
   cli.ts                # CLI utility (federation init/join/doctor/refresh-wsl2)
   federation.ts         # TLS cert gen, HMAC signing, subnet utils, curl-based TLS fetch
   mdns.ts               # mDNS auto-discovery via bonjour-service
@@ -17,7 +17,7 @@ src/                    # Source code
     token.ts            # Shared token file reader for auth
     summarize.ts        # Deterministic git-based auto-summary (no external APIs)
     config.ts           # Config file reader/writer (~/.claude-peers-config.json)
-tests/                  # Test suites (100 tests, 308 assertions)
+tests/                  # Test suites (100 tests, 307 assertions)
   broker.test.ts        # Broker + federation endpoint tests (43 tests)
   cli.test.ts           # CLI + auto-summary tests (17 tests)
   server.test.ts        # MCP server integration tests (18 tests)
@@ -44,9 +44,9 @@ tasks/                  # PRDs and project planning files
 | `broadcast_message(message, scope)` | Send to all peers in scope (machine/directory/repo/lan) |
 | `set_name(name)` | Set session name (from /rename) |
 | `set_summary(summary)` | Set work summary visible to peers |
-| `check_messages()` | Returns unconfirmed pushed messages + new broker messages. Real fallback when channel push isn't working. |
+| `check_messages()` | Poll broker for undelivered messages. Reliable fallback when channel push isn't working. |
 | `message_status(message_id)` | Check delivery status of a previously sent message |
-| `channel_health()` | Diagnose messaging health: broker status, pending messages, delivery failures |
+| `channel_health()` | Diagnose messaging health: broker status, pending messages, dedup state |
 
 ## Running
 
@@ -84,7 +84,7 @@ Default to Bun, not Node.js.
 ## Testing
 
 ```bash
-bun test                           # All 100 tests, 308 assertions
+bun test                           # All 100 tests, 307 assertions
 bun test tests/broker.test.ts      # Broker + federation endpoints (43)
 bun test tests/server.test.ts      # MCP server integration (18)
 bun test tests/federation.test.ts  # Federation TLS/PSK/HMAC (22)
@@ -98,12 +98,13 @@ bun test tests/cli.test.ts         # CLI + auto-summary (17)
 | `CHANGELOG.md` | Version history |
 | `CLAUDE.md` | This file — project instructions |
 | `src/broker.ts` | HTTP server + SQLite + federation TLS + /message-status |
-| `src/server.ts` | MCP server + deferred ack + delivery tracking + channel push |
+| `src/server.ts` | MCP server + simple push-ack + channel push + session name persistence |
 | `src/cli.ts` | CLI: init, join, token, doctor, refresh-wsl2, connect, status |
 | `src/mdns.ts` | mDNS auto-discovery via bonjour-service |
 | `src/federation.ts` | TLS cert gen, HMAC, subnet, curl fetch, WSL2 detection |
 | `src/shared/types.ts` | All TypeScript interfaces |
 | `src/shared/config.ts` | Config file reader/writer with remotes/mdns support |
+| `src/shared/summarize.ts` | Git-based auto-summary with session name support |
 
 ## Known Issues
 

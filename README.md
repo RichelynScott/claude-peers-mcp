@@ -137,13 +137,13 @@ These tools are available to Claude Code when the MCP server is running:
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `list_peers` | `scope`: machine / directory / repo / lan | Discover other Claude Code sessions. Returns ID, name, PID, working directory, git root, summary, and timestamps. |
-| `send_message` | `to_id`, `text`, `type?`, `metadata?`, `reply_to?` | Send a message to a peer. Remote peers use `hostname:peer_id` format. Supports threading via `reply_to`. Tracks delivery and warns if unconfirmed after 30s. |
+| `send_message` | `to_id`, `text`, `type?`, `metadata?`, `reply_to?` | Send a message to a peer. Remote peers use `hostname:peer_id` format. Supports threading via `reply_to`. |
 | `broadcast_message` | `message`, `scope` | Send a message to all peers in the given scope (machine / directory / repo / lan). |
 | `set_name` | `name` | Set a human-readable session name (e.g., from `/rename`). Visible to peers in discovery. |
 | `set_summary` | `summary` | Set a work summary visible to peers. Convention: prefix with `[SessionName]`. |
-| `check_messages` | *(none)* | Check for messages. Returns unconfirmed pushed messages AND new broker messages. Real fallback when channel push isn't working. |
+| `check_messages` | *(none)* | Poll broker for undelivered messages. Use as fallback when channel push notifications aren't appearing. |
 | `message_status` | `message_id` | Check delivery status of a previously sent message by its ID. |
-| `channel_health` | *(none)* | Diagnose messaging health: broker status, pending messages, delivery failures, and channel push state. |
+| `channel_health` | *(none)* | Diagnose messaging health: broker status, pending messages, and dedup state. |
 
 ### Message types
 
@@ -168,6 +168,8 @@ Run from the project directory with `bun src/cli.ts <command>`:
 | `send <id> <message>` | Send a message to a peer by ID |
 | `broadcast <scope> <message>` | Broadcast to all peers in scope |
 | `set-name <id> <name>` | Set a peer's session name |
+| `auto-summary <id>` | Generate and set a deterministic git-based summary |
+| `rotate-token` | Rotate the bearer auth token |
 | `restart` | Kill broker + all MCP servers, restart cleanly |
 | `kill-broker` | Stop the broker daemon |
 | `federation init` | One-command setup (config, certs, firewall, join URL) |
@@ -269,7 +271,7 @@ All local communication (server-to-broker, CLI-to-broker) uses bearer token auth
 claude-peers-mcp/
   src/
     broker.ts              # HTTP broker daemon + SQLite + federation TLS server
-    server.ts              # MCP stdio server + channel push + deferred ack
+    server.ts              # MCP stdio server + channel push + simple push-ack
     cli.ts                 # CLI utility (federation init/join/doctor/refresh-wsl2)
     federation.ts          # TLS cert generation, HMAC signing, subnet filtering
     mdns.ts                # mDNS auto-discovery via bonjour-service
@@ -293,14 +295,14 @@ claude-peers-mcp/
 
 ## Testing
 
-100 tests, 308 assertions.
+100 tests, 307 assertions.
 
 ```bash
 bun test                           # Run all tests
-bun test tests/broker.test.ts      # Broker + federation endpoints
-bun test tests/server.test.ts      # MCP server integration
-bun test tests/federation.test.ts  # Federation TLS/PSK/HMAC
-bun test tests/cli.test.ts         # CLI + auto-summary
+bun test tests/broker.test.ts      # Broker + federation endpoints (43)
+bun test tests/server.test.ts      # MCP server integration (18)
+bun test tests/federation.test.ts  # Federation TLS/PSK/HMAC (22)
+bun test tests/cli.test.ts         # CLI + auto-summary (17)
 ```
 
 ## Observability
@@ -329,21 +331,21 @@ This is a fork of [louislva/claude-peers-mcp](https://github.com/louislva/claude
 | LAN federation | Cross-machine peer discovery and messaging with TLS, PSK, and HMAC security |
 | mDNS auto-discovery | Zero-config peer discovery on LAN via `_claude-peers._tcp` Bonjour service |
 | Federation CLI | `init`, `join`, `doctor`, `token`, `refresh-wsl2`, connect/disconnect with persistence |
-| Deferred ack | Messages not acked until confirmed received — eliminates silent message loss |
-| Delivery tracking | Sender-side delivery confirmation with 30s auto-check and channel push warnings |
+| Deterministic peer IDs | SHA-256 TTY-based IDs stable across `/mcp` reconnects |
+| Simplified delivery | Push once, ack immediately, dedup via Set, `check_messages` as reliable fallback |
+| Session identification | Persistent session names, auto-summaries with `[SessionName]` prefix, prominent names in `list_peers` |
 | Startup reliability | 3-attempt retry with backoff, configurable timeout, broker request priority |
 | Structured messages | Message types (text, query, response, handoff, broadcast), JSON metadata, threading |
 | Broadcast messaging | Scoped group messaging to all peers in machine/directory/repo/LAN |
 | Bearer token auth | Auto-generated token on all broker endpoints with SIGHUP rotation |
-| Session naming | `set_name` tool and CLI command, `from_name` in channel push metadata |
 | Auto-summary | Deterministic git-based summaries (no external API dependencies) |
 | Config file | `~/.claude-peers-config.json` with federation, remotes, mDNS, server settings |
-| Diagnostics | `channel_health` MCP tool, `message_status` tool, auto bug reports in `BUG_REPORTS/` |
+| Diagnostics | `channel_health` MCP tool, `message_status` tool for delivery verification |
 | Rate limiting | 60 req/min per IP on message endpoints |
 | Message safeguards | 10KB size limit, 7-day delivered message cleanup |
 | Zombie prevention | Parent death detection + TTY-based eviction for stale MCP servers |
-| Full test suite | 100 tests, 308 assertions across broker, server, federation, and CLI |
-| Observability | Centralized logs in `cpm-logs/`, delivery failure tracking, CLI status command |
+| Full test suite | 100 tests, 307 assertions across broker, server, federation, and CLI |
+| Observability | Centralized logs in `cpm-logs/`, CLI status command |
 
 ## License
 

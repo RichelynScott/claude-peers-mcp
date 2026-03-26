@@ -12,6 +12,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - **Simplified delivery model**: Stripped deferred ack system (-279 lines). Messages now push once, ack immediately, dedup via Set, with `check_messages` as fallback. Removed: pending buffers, delivery warnings, sender tracking, bug reports, piggyback inbox, retry push — all caused cascading problems (duplicates, spam, constant pinging).
 - **Deterministic peer IDs**: Peer IDs are now SHA-256 hashes of TTY, stable across `/mcp` reconnects. Messages sent to an old ID still arrive after reconnect.
 - **Per-poll peer fetch**: Sender info fetched once per poll cycle with `scope: "lan"` instead of per-message with `scope: "machine"`. Reduces broker load and includes federated senders.
+- **Session identification improvements**: Session names persist locally in MCP server and re-sent on register. Auto-summaries include `[SessionName]` prefix when set. `list_peers` output shows session name as prominent header (`**Name** (id)`). (`37adc79`)
 
 ### Fixed
 - **Duplicate message delivery**: Added permanent `pushedMessageIds` Set with bounded cap (1000). Messages are never pushed twice regardless of ack state or buffer expiry.

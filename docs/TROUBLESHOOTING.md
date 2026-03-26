@@ -31,6 +31,7 @@ All application logs are in `cpm-logs/` (gitignored, local only):
 | `cpm-logs/messages.log` | All sent and received messages with timestamps and sender names |
 | `cpm-logs/broker.log` | Broker lifecycle: startup, peer cleanup, message cleanup, errors |
 | `cpm-logs/server.log` | MCP server: registration, polling, connection events, errors |
+| `cpm-logs/federation.log` | Federation: TLS, handshakes, peer sync, relay |
 
 Note: Claude Code hook logs (chat.json, pre_tool_use.json, etc.) are in `logs/` — these are unrelated to CPM.
 
@@ -87,14 +88,13 @@ Then **fully restart** each Claude Code session (`/exit` + reopen, not just `/mc
 - Model-dependent behavior — different Claude models (Sonnet, Opus, Haiku) may handle channel notifications differently
 - Schema validation inside Claude Code may silently reject certain notification payloads
 
-**Mitigations in v0.4.0**:
-- **Deferred ack**: Messages are not acked to the broker until confirmed received. They stay in a pending buffer for 120s, giving `check_messages` a chance to recover them.
-- **`check_messages` fallback**: Returns pending (pushed but unconfirmed) + new broker messages. Use this when channel notifications aren't appearing.
-- **Sender delivery warnings**: If a message is still undelivered after 30s, the sender gets a channel notification warning. Auto-generates a bug report in `BUG_REPORTS/`.
-- **`channel_health` tool**: Diagnoses messaging state including pending counts and delivery failures.
+**Mitigations in v0.4.1**:
+- **Simplified delivery**: Messages push once and ack immediately. Dedup via permanent `pushedMessageIds` Set prevents double delivery.
+- **`check_messages` fallback**: Polls broker for any undelivered messages. Use this when channel notifications aren't appearing — it's the reliable fallback.
+- **`channel_health` tool**: Diagnoses broker status, pending messages, and dedup state.
+- **Dead peer bounce**: Broker bounces undelivered messages back to senders when target peer dies.
 
 **What does NOT work**:
-- `check_messages` in v0.3.0 returned empty because messages were already acked (fixed in v0.4.0)
 - Relying on `mcp.notification()` success as proof of delivery (it only proves bytes hit stdout)
 
 **If you're experiencing this**, call `check_messages` periodically as a fallback — it will surface messages that channel push missed.
@@ -112,7 +112,7 @@ ps aux | grep "bun.*server.ts" | grep -v grep
 # If you see extras (especially from different paths), that's the problem
 ```
 
-**Prevention**: As of v0.3.0, server.ts automatically detects and kills stale MCP server processes on startup. If you still hit this issue, use `bun src/cli.ts restart`.
+**Prevention**: As of v0.3.0, server.ts uses parent death detection (PPID check) and TTY-based broker eviction to clean up stale processes. If you still hit this issue, use `bun src/cli.ts restart`.
 
 ### MCP Server Fails to Connect After Path Change or Update
 
@@ -144,7 +144,7 @@ If a project-level `.mcp.json` defines claude-peers, it **overrides** the global
 2. Reconnect MCP in EVERY active session: run `/mcp` in each Claude Code instance
 3. The broker auto-restarts when the first session reconnects
 
-**How it works now**: Messages are only marked delivered AFTER the recipient's MCP server successfully pushes the channel notification. If the notification fails, the message stays undelivered and retries on the next 1-second poll cycle.
+**How it works now (v0.4.1)**: Messages are pushed once via channel notification and acked immediately. A permanent dedup Set ensures no message is pushed twice. If channel push fails silently (Claude Code drops the notification), `check_messages` is the reliable fallback.
 
 ### "Peer X is not running (PID Y dead)"
 
