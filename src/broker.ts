@@ -58,10 +58,13 @@ const TOKEN_PATH = process.env.CLAUDE_PEERS_TOKEN ?? `${process.env.HOME}/.claud
 const persistentConfig = loadConfig();
 
 // --- Federation configuration (US-003) ---
-const FEDERATION_ENABLED =
-  process.env.CLAUDE_PEERS_FEDERATION_ENABLED === "true" ||
-  process.env.CLAUDE_PEERS_FEDERATION_ENABLED === "1" ||
-  persistentConfig.federation?.enabled === true;
+// Env var explicitly overrides config file (including "false"/"0" to disable)
+const FEDERATION_ENABLED = (() => {
+  const envVal = process.env.CLAUDE_PEERS_FEDERATION_ENABLED;
+  if (envVal === "true" || envVal === "1") return true;
+  if (envVal === "false" || envVal === "0") return false;
+  return persistentConfig.federation?.enabled === true;
+})();
 const FEDERATION_PORT =
   parseInt(process.env.CLAUDE_PEERS_FEDERATION_PORT || "") ||
   persistentConfig.federation?.port ||

@@ -270,7 +270,7 @@ describe("TLS & Startup", () => {
         CLAUDE_PEERS_PORT: String(noFedPort),
         CLAUDE_PEERS_DB: noFedDB,
         CLAUDE_PEERS_TOKEN: noFedTokenPath,
-        // CLAUDE_PEERS_FEDERATION_ENABLED intentionally not set
+        CLAUDE_PEERS_FEDERATION_ENABLED: "false", // Explicitly disable (config file may have enabled=true)
       },
       stdio: ["ignore", "ignore", "pipe"],
     });
