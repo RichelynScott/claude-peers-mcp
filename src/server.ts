@@ -215,6 +215,7 @@ function getTty(): string | null {
 let myId: PeerId | null = null;
 let myCwd = process.cwd();
 let myGitRoot: string | null = null;
+let channelPushVerified = false;
 
 // --- Deferred ack: pending confirmation buffer (US-001) ---
 // Messages pushed via channel notification but not yet confirmed as received by Claude Code.
@@ -555,6 +556,13 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
 mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
   const { name, arguments: args } = req.params;
 
+  // Channel push verification: any tool call proves the model is active
+  if (!channelPushVerified) {
+    channelPushVerified = true;
+    log("Channel push verified: tool call received — marking as working");
+    brokerFetch("/set-channel-push", { id: myId, status: "working" }).catch(() => {});
+  }
+
   switch (name) {
     case "list_peers": {
       const scope = (args as { scope: string }).scope as "machine" | "directory" | "repo" | "lan";
@@ -587,6 +595,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           if (p.git_root) parts.push(`Repo: ${p.git_root}`);
           if (p.tty) parts.push(`TTY: ${p.tty}`);
           if (p.summary) parts.push(`Summary: ${p.summary}`);
+          if (p.channel_push && p.channel_push !== "working") parts.push(`Channel push: ${p.channel_push}`);
           parts.push(`Last seen: ${p.last_seen}`);
           return parts.join("\n  ");
         });
@@ -1251,7 +1260,43 @@ async function main() {
   const timingStr = Object.entries(timing).map(([k, v]) => `${k}=${v}ms`).join(", ");
   log(`Startup complete: ${timingStr}`);
 
-  // 6. Start polling for inbound messages
+  // 6. Channel push verification — test if notifications reach Claude Code
+  // Push a hello notification, then wait 10s. If any tool call arrives
+  // (proving the model is active and processing), mark channel_push as "working".
+  // Otherwise mark as "unverified" so senders see the warning.
+  channelPushVerified = false;
+
+  try {
+    await mcp.notification({
+      method: "notifications/claude/channel",
+      params: {
+        content: "claude-peers MCP server connected. Channel push active.",
+        meta: {
+          from_id: "system",
+          from_name: "claude-peers",
+          from_summary: "",
+          from_cwd: "",
+          type: "text",
+          message_id: "startup-hello",
+        },
+      },
+    });
+    log("Channel push hello sent — waiting 10s for verification");
+  } catch (e) {
+    log(`Channel push hello failed: ${e instanceof Error ? e.message : String(e)}`);
+    // Mark as unverified immediately
+    try { await brokerFetch("/set-channel-push", { id: myId, status: "unverified" }); } catch {}
+  }
+
+  // Set a timer: if no tool call within 10s, mark as unverified
+  setTimeout(async () => {
+    if (!channelPushVerified) {
+      log("Channel push verification: no tool call within 10s — marking as unverified");
+      try { await brokerFetch("/set-channel-push", { id: myId, status: "unverified" }); } catch {}
+    }
+  }, 10_000);
+
+  // 7. Start polling for inbound messages
   const pollTimer = setInterval(pollAndPushMessages, POLL_INTERVAL_MS);
 
   // 7. Start heartbeat

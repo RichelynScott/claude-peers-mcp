@@ -174,6 +174,9 @@ db.run(`
   )
 `);
 
+// Schema migration: add channel_push status column for existing databases
+try { db.run("ALTER TABLE peers ADD COLUMN channel_push TEXT DEFAULT 'unknown'"); } catch { /* column already exists */ }
+
 // Schema migration: add structured message columns for existing databases
 try { db.run("ALTER TABLE messages ADD COLUMN type TEXT NOT NULL DEFAULT 'text'"); } catch { /* column already exists */ }
 try { db.run("ALTER TABLE messages ADD COLUMN metadata TEXT DEFAULT NULL"); } catch { /* column already exists */ }
@@ -216,6 +219,10 @@ const updateSummary = db.prepare(`
 
 const updateName = db.prepare(`
   UPDATE peers SET session_name = ? WHERE id = ?
+`);
+
+const updateChannelPush = db.prepare(`
+  UPDATE peers SET channel_push = ? WHERE id = ?
 `);
 
 const deletePeer = db.prepare(`
@@ -678,6 +685,13 @@ Bun.serve({
         case "/set-name":
           handleSetName(body as SetNameRequest);
           return Response.json({ ok: true });
+        case "/set-channel-push": {
+          const { id, status } = body as { id: string; status: string };
+          if (["unknown", "unverified", "working"].includes(status)) {
+            updateChannelPush.run(status, id);
+          }
+          return Response.json({ ok: true });
+        }
         case "/list-peers":
           return Response.json(handleListPeers(body as ListPeersRequest));
         case "/send-message":
