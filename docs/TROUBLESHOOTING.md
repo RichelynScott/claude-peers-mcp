@@ -42,13 +42,66 @@ Note: Claude Code hook logs (chat.json, pre_tool_use.json, etc.) are in `logs/` 
 
 **Symptoms**: Messages show as sent but recipient session never receives them. `send_message` returns success but no channel notification appears.
 
-**Most likely cause**: Stale MCP server processes from a previous session or path change.
+**Quick diagnosis** (v0.4.0+):
+```bash
+# Use the channel_health MCP tool from any session
+# Or check delivery status of a specific message:
+# Use the message_status MCP tool with the message ID
+
+# Check from SQLite directly:
+sqlite3 ~/.claude-peers.db "SELECT id, delivered, sent_at FROM messages WHERE id = <MSG_ID>"
+# delivered=0 means undelivered, delivered=1 means acked
+```
+
+**Possible causes** (in order of likelihood):
+
+1. **Claude Code silently dropping channel notifications** (KNOWN ISSUE — see below)
+2. **Stale MCP server processes** consuming messages
+3. **Channel push not enabled** (missing `--dangerously-load-development-channels` flag)
+4. **`/mcp` reconnect broke channel subscriptions** (requires full session restart)
 
 **Quick fix**:
 ```bash
 bun src/cli.ts restart
 ```
-Then run `/mcp` in each Claude Code session to reconnect.
+Then **fully restart** each Claude Code session (`/exit` + reopen, not just `/mcp`).
+
+### KNOWN ISSUE: Claude Code Silently Drops Channel Notifications
+
+**Status**: Under investigation. This is the #1 reliability issue in claude-peers.
+
+**What happens**: `mcp.notification()` succeeds (bytes written to stdout), the MCP SDK Promise resolves, but Claude Code never renders the notification. The message is gone — the recipient never sees it. This happens ~30-50% of the time for same-machine messages.
+
+**What we know**:
+- The MCP SDK's `notification()` method is fire-and-forget (JSON-RPC 2.0 spec). It resolves when bytes are written to the stdio pipe, NOT when Claude Code processes them.
+- There is no delivery confirmation signal from Claude Code back to the MCP server.
+- The `--dangerously-load-development-channels server:claude-peers` flag IS active on affected sessions.
+- The receiving MCP server logs `MESSAGE RECEIVED` with full content — it polled and pushed the message.
+- The recipient was idle (not mid-response) when the message arrived.
+- Both same-machine and cross-machine (federation) messages are affected.
+- Sometimes it works perfectly, sometimes it doesn't — no clear pattern identified.
+
+**Possible causes** (unconfirmed):
+- Claude Code's internal notification dispatcher may have a queue/buffer that drops messages under certain conditions
+- Channel subscription state may be lost after certain internal events (not just `/mcp`)
+- Model-dependent behavior — different Claude models (Sonnet, Opus, Haiku) may handle channel notifications differently
+- Schema validation inside Claude Code may silently reject certain notification payloads
+
+**Mitigations in v0.4.0**:
+- **Deferred ack**: Messages are not acked to the broker until confirmed received. They stay in a pending buffer for 120s, giving `check_messages` a chance to recover them.
+- **`check_messages` fallback**: Returns pending (pushed but unconfirmed) + new broker messages. Use this when channel notifications aren't appearing.
+- **Sender delivery warnings**: If a message is still undelivered after 30s, the sender gets a channel notification warning. Auto-generates a bug report in `BUG_REPORTS/`.
+- **`channel_health` tool**: Diagnoses messaging state including pending counts and delivery failures.
+
+**What does NOT work**:
+- `check_messages` in v0.3.0 returned empty because messages were already acked (fixed in v0.4.0)
+- Relying on `mcp.notification()` success as proof of delivery (it only proves bytes hit stdout)
+
+**If you're experiencing this**, call `check_messages` periodically as a fallback — it will surface messages that channel push missed.
+
+### Stale MCP Server Processes
+
+**Cause**: When the MCP config path changes or a session restarts, the old MCP server process may survive and continue polling/consuming messages.
 
 **How to diagnose**:
 ```bash
@@ -58,8 +111,6 @@ ps aux | grep "bun.*server.ts" | grep -v grep
 # You should see exactly one per active Claude session
 # If you see extras (especially from different paths), that's the problem
 ```
-
-**Root cause**: When the MCP config path changes or a session restarts, the old MCP server process may survive and continue polling/consuming messages. The new session registers a fresh MCP server, but the zombie consumes messages first.
 
 **Prevention**: As of v0.3.0, server.ts automatically detects and kills stale MCP server processes on startup. If you still hit this issue, use `bun src/cli.ts restart`.
 
@@ -164,21 +215,29 @@ curl -s -X POST http://127.0.0.1:7899/unregister \
   -d '{"id": "STALE_PEER_ID"}'
 ```
 
-### Federation Setup — Guided Wizard
+### Federation Setup
 
-If you're setting up federation for the first time, the guided setup command handles environment detection, prerequisite checks, and platform-specific configuration (WSL2 port forwarding, macOS firewall, etc.):
-
+**One-command setup** (v0.4.0+):
 ```bash
-CLAUDE_PEERS_FEDERATION_ENABLED=true bun src/cli.ts federation setup
+bun src/cli.ts federation init       # Configures everything, outputs a join URL
 ```
 
-It will walk you through:
-1. Token file verification
-2. Federation env var check
-3. Broker status check
-4. Platform-specific network setup (WSL2 port forwarding, macOS firewall, or Linux firewall hints)
-5. LAN IP detection and remote connection instructions
-6. Token sharing guidance
+**On the second machine**, use the join URL:
+```bash
+bun src/cli.ts federation join cpt://192.168.1.100:7900/<token>
+```
+
+**Verify setup**:
+```bash
+bun src/cli.ts federation doctor     # Checks every prerequisite, reports pass/fail
+```
+
+**WSL2 port forwarding refresh** (after reboot):
+```bash
+bun src/cli.ts federation refresh-wsl2
+```
+
+Connections persist to `~/.claude-peers-config.json` and auto-reconnect on broker restart.
 
 ### Federation Connect Fails: "Connection rejected: outside allowed subnet"
 
