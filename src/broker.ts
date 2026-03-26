@@ -864,11 +864,7 @@ function autoReconnectRemote(host: string, port: number, label?: string) {
   let attemptNum = 0;
 
   async function attempt() {
-    if (attemptNum > 0) {
-      const delay = attemptNum < delays.length ? delays[attemptNum] : 60000;
-      await new Promise(r => setTimeout(r, delay));
-    }
-
+    // Delay is handled by setTimeout caller — no internal await needed
     if (remoteMachines.has(key)) {
       federationLog(`Auto-reconnect to ${key}: already connected`);
       return;

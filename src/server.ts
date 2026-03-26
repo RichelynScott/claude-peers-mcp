@@ -1052,20 +1052,13 @@ async function pollAndPushMessages() {
       // Deferred ack (US-001): add to pending buffer instead of acking immediately.
       // Message will be acked when confirmation evidence arrives.
       if (pendingMessages.size >= MAX_PENDING) {
-        // Buffer full — force-ack oldest to make room
-        let oldestId: number | null = null;
-        let oldestTime = Infinity;
-        for (const [id, pending] of pendingMessages) {
-          if (pending.pushedAt < oldestTime) {
-            oldestTime = pending.pushedAt;
-            oldestId = id;
-          }
-        }
-        if (oldestId !== null) {
-          await confirmMessages([oldestId], "buffer-overflow");
-        }
+        // Buffer full — skip adding to pending. Message stays unacked in broker
+        // and will be re-polled (dedup guard at top of loop skips known pending IDs).
+        // This preserves the deferred ack contract: never ack without confirmation.
+        log(`Pending buffer full (${MAX_PENDING}), skipping msg#${msg.id} — will re-poll from broker`);
+      } else {
+        pendingMessages.set(msg.id, { msg, pushedAt: Date.now() });
       }
-      pendingMessages.set(msg.id, { msg, pushedAt: Date.now() });
 
       // Full message log for observability (stderr + file)
       const senderLabel = fromName || msg.from_id;
@@ -1292,7 +1285,7 @@ async function main() {
     log("Channel push hello sent — waiting 10s for verification");
   } catch (e) {
     log(`Channel push hello failed: ${e instanceof Error ? e.message : String(e)}`);
-    // Mark as unverified immediately
+    // Mark as unverified immediately (timer may also fire — idempotent, acceptable)
     try { await brokerFetch("/set-channel-push", { id: myId, status: "unverified" }); } catch {}
   }
 
