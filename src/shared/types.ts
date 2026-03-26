@@ -183,3 +183,56 @@ export interface FederationStatusResponse {
   }>;
   total_remote_peers: number;
 }
+
+// --- Broker Context (for hot-reload handler separation) ---
+
+/**
+ * All prepared statements used by broker handlers.
+ * Owned by broker.ts, passed to handlers via BrokerContext.
+ */
+export interface BrokerStatements {
+  insertPeer: import("bun:sqlite").Statement;
+  updateLastSeen: import("bun:sqlite").Statement;
+  updateSummary: import("bun:sqlite").Statement;
+  updateName: import("bun:sqlite").Statement;
+  updateChannelPush: import("bun:sqlite").Statement;
+  deletePeer: import("bun:sqlite").Statement;
+  selectAllPeers: import("bun:sqlite").Statement;
+  selectPeersByDirectory: import("bun:sqlite").Statement;
+  selectPeersByGitRoot: import("bun:sqlite").Statement;
+  insertMessage: import("bun:sqlite").Statement;
+  selectUndelivered: import("bun:sqlite").Statement;
+  selectMessageExists: import("bun:sqlite").Statement;
+  markDelivered: import("bun:sqlite").Statement;
+}
+
+/**
+ * Shared broker state — owned by broker.ts, passed by reference to handler factories.
+ * Mutable scalars are wrapped in objects for pass-by-reference semantics.
+ * Maps and db survive handler reloads because they're the same object reference.
+ */
+export interface BrokerContext {
+  db: import("bun:sqlite").Database;
+  stmts: BrokerStatements;
+  /** Mutable token ref — re-read on SIGHUP */
+  token: { current: string };
+  /** Federation remote machines — in-memory, auto-reconnects from config */
+  remoteMachines: Map<string, RemoteMachine>;
+  /** Per-IP rate limit state */
+  rateLimits: Map<string, { count: number; resetAt: number }>;
+  /** Request counters for /health endpoint */
+  counters: { requestsThisMinute: number; requestsLastMinute: number };
+  /** Broker start time (epoch ms) for uptime calculation */
+  startTime: number;
+  // --- Config (read from context, not import-time frozen) ---
+  federationEnabled: boolean;
+  federationPort: number;
+  /** Mutable — updated on SIGHUP config reload */
+  federationHostname: { current: string };
+  /** Mutable — updated on SIGHUP config reload */
+  federationSubnet: { current: string };
+  port: number;
+  // --- Utility functions ---
+  brokerLog: (msg: string) => void;
+  isValidToken: (provided: string, expected: string) => boolean;
+}
