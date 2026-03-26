@@ -1,6 +1,6 @@
 {
   "name": "claude-peers",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "Peer discovery and messaging for Claude Code instances",
   "author": "RichelynScott",
   "license": "MIT",

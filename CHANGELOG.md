@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-03-26 — Stable Release
+
+### Summary
+Production-stable release after extensive reliability work, multi-model code review (GPT-5.4, Grok-4.20, Gemini-3.1-Pro, DeepSeek-v3.2, Minimax-m2.7, Kimi-k2.5, GLM-5), and security audit. 104 tests, 318 assertions. Simplified delivery model, deterministic peer IDs, broker hot-reload, and comprehensive CLI tooling.
+
+### Added
+- End-to-end integration tests for full message delivery pipeline (4 new tests)
+- Broker SIGHUP hot-reload for config/token changes without restart
+- `reload-broker` CLI command sends SIGHUP to running broker
+- Federation relay validation (type, metadata, size limit) matching local send rules
+
+### Security
+- Final PAL security review (Gemini-3.1-Pro) — no critical or high issues
+- All 12 security checklist items verified (ack scoping, HMAC, timingSafeEqual, parameterized SQL, etc.)
+
 ## [0.4.2] - 2026-03-26
 
 ### Added
