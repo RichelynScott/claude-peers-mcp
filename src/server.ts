@@ -217,187 +217,11 @@ let myCwd = process.cwd();
 let myGitRoot: string | null = null;
 let channelPushVerified = false;
 
-// --- Deferred ack: pending confirmation buffer (US-001) ---
-// Messages pushed via channel notification but not yet confirmed as received by Claude Code.
-// Only acked to broker when confirmation evidence arrives:
-//   1. Claude calls check_messages (explicit read)
-//   2. Claude calls send_message with reply_to referencing a pending msg
-//   3. Optimistic timeout (120s) expires without transport error
-
-interface PendingMessage {
-  msg: Message;
-  pushedAt: number;
-  pushAttempts: number;
-  lastPushAt: number;
-}
-
-const pendingMessages = new Map<number, PendingMessage>();
-const pushedMessageIds = new Set<number>(); // Permanent dedup — never push same message twice
-const MAX_PENDING = 100;
-const MAX_PUSHED_IDS = 1000; // Cap the dedup set to prevent unbounded growth
-const PENDING_EXPIRY_MS = 300_000; // 5 min — expire stale pending (not ack, just drop from buffer)
-
-async function confirmMessages(messageIds: number[], reason: string) {
-  if (messageIds.length === 0 || !myId) return;
-  log(`Confirming ${messageIds.length} message(s) (reason: ${reason}): [${messageIds.join(", ")}]`);
-  try {
-    await brokerFetch("/ack-messages", { id: myId, message_ids: messageIds });
-    for (const id of messageIds) {
-      pendingMessages.delete(id);
-    }
-  } catch (e) {
-    log(`Confirm-ack failed (reason: ${reason}), will retry: ${e instanceof Error ? e.message : String(e)}`);
-  }
-}
-
-// Expire old pending messages from buffer. No retry push — retrying the
-// unreliable mcp.notification() just creates duplicates when it partially works.
-// Delivery is guaranteed via piggyback on tool responses (request/response path).
-async function expirePendingMessages() {
-  const now = Date.now();
-  for (const [id, pending] of pendingMessages) {
-    if (now - pending.pushedAt >= PENDING_EXPIRY_MS) {
-      pendingMessages.delete(id);
-      log(`Pending msg#${id} expired from buffer (5min) — still unacked in broker for check_messages`);
-    }
-  }
-}
-
-// --- Task A: Sent message tracking for delivery confirmation ---
-
-interface SentMessage {
-  messageId: number;
-  toId: string;
-  sentAt: number;
-  warned: boolean;
-  lastCheckedAt: number;
-}
-
-const sentMessages = new Map<number, SentMessage>();
-const MAX_SENT = 200;
-const DELIVERY_CHECK_DELAY_MS = 30_000; // Sender checks after 30s — must be shorter than OPTIMISTIC_CONFIRM_MS
-const SENT_MESSAGE_TTL_MS = 300_000; // Clean up after 5 min
-const deliveryWarnings: string[] = []; // Warnings to inject into next tool response (max 20)
-const MAX_DELIVERY_WARNINGS = 20;
-
-async function checkSentMessageDelivery() {
-  const now = Date.now();
-  const toCheck: SentMessage[] = [];
-
-  for (const [id, sent] of sentMessages) {
-    // Clean up old entries
-    if (now - sent.sentAt > SENT_MESSAGE_TTL_MS) {
-      sentMessages.delete(id);
-      continue;
-    }
-    // Check unwarned messages older than 30s, and recheck warned ones once after 60s
-    if (!sent.warned && now - sent.sentAt > DELIVERY_CHECK_DELAY_MS) {
-      toCheck.push(sent);
-    } else if (sent.warned && !sent.lastCheckedAt && now - sent.sentAt > DELIVERY_CHECK_DELAY_MS * 2) {
-      // One recheck of warned messages at 60s — if delivered late, clean up
-      sent.lastCheckedAt = now;
-      toCheck.push(sent);
-    }
-  }
-
-  for (const sent of toCheck) {
-    try {
-      const status = await brokerFetch<{ delivered: boolean; error?: string }>("/message-status", { message_id: sent.messageId });
-      if (!status.delivered) {
-        // Only warn and notify on FIRST detection (not rechecks)
-        if (!sent.warned) {
-          sent.warned = true;
-          const warning = `⚠ Message #${sent.messageId} to ${sent.toId} may not have been delivered (sent ${Math.round((now - sent.sentAt) / 1000)}s ago, still unconfirmed)`;
-          log(warning);
-          if (deliveryWarnings.length < MAX_DELIVERY_WARNINGS) deliveryWarnings.push(warning);
-          // Push ONE self-notification so the sender is interrupted
-          try {
-            await mcp.notification({
-              method: "notifications/claude/channel",
-              params: {
-                content: warning,
-                meta: {
-                  from_id: "system",
-                  from_name: "claude-peers",
-                  from_summary: "",
-                  from_cwd: "",
-                  type: "text",
-                  message_id: `delivery-warning-${sent.messageId}`,
-                },
-              },
-            });
-          } catch {
-            // Channel push may not be available — warning stays in deliveryWarnings for next tool response
-          }
-          // Task B: Auto bug report (once per message)
-          writeBugReport(sent, "unconfirmed_delivery");
-        }
-        // Recheck found still undelivered — no action needed, already warned
-      } else {
-        // Confirmed — clean up
-        sentMessages.delete(sent.messageId);
-      }
-    } catch {
-      // Broker unreachable — skip this check
-    }
-  }
-}
-
-// --- Task B: Auto bug reports on delivery failure ---
-
-const BUG_REPORT_DIR = new URL("../BUG_REPORTS", import.meta.url).pathname;
-const FAILURE_LOG_PATH = `${CPM_LOG_DIR}/delivery-failures.log`;
-
-async function writeBugReport(sent: SentMessage, reason: string, error?: string) {
-  const timestamp = new Date().toISOString();
-  const msgLabel = sent.messageId > 0 ? `msg${sent.messageId}` : `failure-${Date.now()}`;
-  const filename = `${timestamp.replace(/[:.]/g, "-")}_${msgLabel}.md`;
-
-  // Gather diagnostics (best-effort, short timeout — don't block error path)
-  let brokerHealth = "unknown";
-  let peerList = "unknown";
-  try {
-    const health = await fetch(`${BROKER_URL}/health`, { signal: AbortSignal.timeout(500) });
-    if (health.ok) brokerHealth = JSON.stringify(await health.json());
-  } catch {}
-  try {
-    const peers = await brokerFetch<{ id: string; session_name?: string }[]>("/list-peers", { scope: "machine", cwd: myCwd, git_root: myGitRoot });
-    peerList = peers.map((p: any) => `${p.session_name || p.id} (${p.id})`).join(", ");
-  } catch {}
-
-  const report = `# Bug Report: ${reason}
-
-**Timestamp**: ${timestamp}
-**Message ID**: ${sent.messageId}
-**From**: ${myId}
-**To**: ${sent.toId}
-**Sent At**: ${new Date(sent.sentAt).toISOString()}
-**Age**: ${Math.round((Date.now() - sent.sentAt) / 1000)}s
-**Reason**: ${reason}
-${error ? `**Error**: ${error}\n` : ""}
-## Diagnostics
-
-**Broker Health**: ${brokerHealth}
-**Active Peers**: ${peerList}
-**Pending Inbound**: ${pendingMessages.size} message(s)
-**Tracked Outbound**: ${sentMessages.size} message(s)
-`;
-
-  // Write bug report file
-  try {
-    require("fs").mkdirSync(BUG_REPORT_DIR, { recursive: true });
-    await Bun.write(Bun.file(`${BUG_REPORT_DIR}/${filename}`), report);
-    log(`Bug report written: BUG_REPORTS/${filename}`);
-  } catch (e) {
-    log(`Failed to write bug report: ${e instanceof Error ? e.message : String(e)}`);
-  }
-
-  // Append to delivery failures log
-  try {
-    const logEntry = `[${timestamp}] ${reason} | msg#${sent.messageId} to ${sent.toId} | age=${Math.round((Date.now() - sent.sentAt) / 1000)}s${error ? ` | error=${error}` : ""}\n`;
-    await Bun.write(Bun.file(FAILURE_LOG_PATH), logEntry, { append: true });
-  } catch {}
-}
+// --- Simple message dedup ---
+// Push once, ack immediately, never push same message twice.
+// check_messages is the reliable fallback if channel push drops the notification.
+const pushedMessageIds = new Set<number>();
+const MAX_PUSHED_IDS = 1000;
 
 // --- MCP Server ---
 
@@ -581,32 +405,6 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     brokerFetch("/set-channel-push", { id: myId, status: "working" }).catch(() => {});
   }
 
-  // Piggyback inbox: if there are pending inbound messages, confirm them on this
-  // reliable request/response path and append a notice to the tool response.
-  // This is the key reliability mechanism — push is a hint, tool responses are the guarantee.
-  let inboxNotice = "";
-  if (pendingMessages.size > 0 && name !== "check_messages") {
-    const pendingMsgs = [...pendingMessages.values()].map(p => p.msg);
-    const allIds = pendingMsgs.map(m => m.id);
-    await confirmMessages(allIds, "piggyback-on-tool-call");
-    const count = pendingMsgs.length;
-    const previews = pendingMsgs.slice(0, 3).map(m => {
-      const from = m.from_id;
-      const preview = m.text.slice(0, 80) + (m.text.length > 80 ? "..." : "");
-      return `  From ${from}: ${preview}`;
-    }).join("\n");
-    const more = count > 3 ? `\n  (${count - 3} more — call check_messages for full content)` : "";
-    inboxNotice = `\n\n📬 ${count} message(s) received while channel push was unreliable:\n${previews}${more}`;
-  }
-
-  // Helper to append inbox notice to any tool response
-  function appendInbox(result: { content: Array<{ type: string; text: string }>; isError?: boolean }) {
-    if (inboxNotice && result.content?.[0]?.type === "text") {
-      result.content[0].text += inboxNotice;
-    }
-    return result;
-  }
-
   switch (name) {
     case "list_peers": {
       const scope = (args as { scope: string }).scope as "machine" | "directory" | "repo" | "lan";
@@ -623,7 +421,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
             content: [
               {
                 type: "text" as const,
-                text: `No other Claude Code instances found (scope: ${scope}).${inboxNotice}`,
+                text: `No other Claude Code instances found (scope: ${scope}).`,
               },
             ],
           };
@@ -648,7 +446,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           content: [
             {
               type: "text" as const,
-              text: `Found ${peers.length} peer(s) (scope: ${scope}):\n\n${lines.join("\n\n")}${inboxNotice}`,
+              text: `Found ${peers.length} peer(s) (scope: ${scope}):\n\n${lines.join("\n\n")}`,
             },
           ],
         };
@@ -731,32 +529,10 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         } catch {
           // Non-critical
         }
-        // US-001: If reply_to references a pending message, confirm it (reply is proof of receipt)
-        if (reply_to !== undefined && pendingMessages.has(reply_to)) {
-          confirmMessages([reply_to], "reply_to").catch(() => {});
-        }
-
-        // Task A: Track sent message for delivery confirmation
-        if (result.message_id != null && sentMessages.size < MAX_SENT) {
-          sentMessages.set(result.message_id, {
-            messageId: result.message_id,
-            toId: to_id,
-            sentAt: Date.now(),
-            warned: false,
-            lastCheckedAt: 0,
-          });
-        }
-
         // Build preview: first line or first 120 chars
         const preview = message.split("\n")[0].slice(0, 120) + (message.length > 120 ? "..." : "");
-        // Include any pending delivery warnings
-        let responseText = `Message sent to peer ${to_id} (${msgIdTag})\n> Preview: ${preview}`;
-        if (deliveryWarnings.length > 0) {
-          responseText += `\n\n${deliveryWarnings.join("\n")}`;
-          deliveryWarnings.length = 0;
-        }
         return {
-          content: [{ type: "text" as const, text: responseText + inboxNotice }],
+          content: [{ type: "text" as const, text: `Message sent to peer ${to_id} (${msgIdTag})\n> Preview: ${preview}` }],
         };
       } catch (e) {
         // Task B: Auto bug report on send failure
@@ -835,31 +611,24 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         };
       }
       try {
-        // US-003: Return pending (pushed but unconfirmed) + new broker messages, deduplicated.
-        // This is the real fallback when channel push isn't working.
-        const pendingMsgs = [...pendingMessages.values()].map(p => p.msg);
-        const pendingIds = new Set(pendingMsgs.map(m => m.id));
-
-        // Poll broker for undelivered messages (includes pending since they're unacked)
+        // Poll broker for undelivered messages and ack them
         const result = await brokerFetch<PollMessagesResponse>("/poll-messages", { id: myId });
 
-        // Merge: pending + new broker messages, deduped by message_id
-        const allMessages: Message[] = [...pendingMsgs];
-        for (const m of result.messages) {
-          if (!pendingIds.has(m.id)) {
-            allMessages.push(m);
-          }
-        }
-
-        if (allMessages.length === 0) {
+        if (result.messages.length === 0) {
           return {
             content: [{ type: "text" as const, text: "No new messages." }],
           };
         }
 
-        // Model is explicitly reading — confirm all messages as seen
-        const allIds = allMessages.map(m => m.id);
-        await confirmMessages(allIds, "check_messages");
+        // Ack all — the model is explicitly reading them
+        const allIds = result.messages.map(m => m.id);
+        try {
+          await brokerFetch("/ack-messages", { id: myId, message_ids: allIds });
+        } catch {}
+        // Add to dedup set
+        for (const id of allIds) pushedMessageIds.add(id);
+
+        const allMessages = result.messages;
 
         const lines = allMessages.map((m) => {
           let prefix = "";
@@ -994,9 +763,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
 
       // Channel push state
       report.push("");
-      report.push(`Inbound pending (pushed, unconfirmed): ${pendingMessages.size}`);
-      report.push(`Outbound tracked (sent, awaiting confirmation): ${sentMessages.size}`);
-      report.push(`Delivery warnings pending: ${deliveryWarnings.length}`);
+      report.push(`Pushed message IDs tracked (dedup): ${pushedMessageIds.size}`);
 
       // Recent delivery failures
       try {
@@ -1044,10 +811,11 @@ async function pollAndPushMessages() {
 
   try {
     const result = await brokerFetch<PollMessagesResponse>("/poll-messages", { id: myId });
+    const ackedIds: number[] = [];
 
     for (const msg of result.messages) {
       // Skip messages already pushed (permanent dedup — never push same message twice)
-      if (pushedMessageIds.has(msg.id) || pendingMessages.has(msg.id)) continue;
+      if (pushedMessageIds.has(msg.id)) continue;
 
       // Look up the sender's info for context
       let fromSummary = "";
@@ -1098,27 +866,14 @@ async function pollAndPushMessages() {
         continue;
       }
 
-      // Deferred ack (US-001): add to pending buffer instead of acking immediately.
-      // Message will be acked when confirmation evidence arrives.
-      if (pendingMessages.size >= MAX_PENDING) {
-        // Buffer full — skip adding to pending. Message stays unacked in broker
-        // and will be re-polled (dedup guard at top of loop skips known pending IDs).
-        // This preserves the deferred ack contract: never ack without confirmation.
-        log(`Pending buffer full (${MAX_PENDING}), skipping msg#${msg.id} — will re-poll from broker`);
-      } else {
-        pendingMessages.set(msg.id, { msg, pushedAt: Date.now(), pushAttempts: 1, lastPushAt: Date.now() });
-        // Permanent dedup — prevent re-push after expiry from pending buffer
-        pushedMessageIds.add(msg.id);
-        if (pushedMessageIds.size > MAX_PUSHED_IDS) {
-          // Evict oldest IDs (Set iterates in insertion order)
-          const iter = pushedMessageIds.values();
-          for (let i = 0; i < 200; i++) iter.next(); // skip keeping 200
-          // Actually, just clear the oldest half
-          const toKeep = [...pushedMessageIds].slice(-MAX_PUSHED_IDS / 2);
-          pushedMessageIds.clear();
-          for (const id of toKeep) pushedMessageIds.add(id);
-        }
+      // Mark as pushed (dedup) and queue for immediate ack
+      pushedMessageIds.add(msg.id);
+      if (pushedMessageIds.size > MAX_PUSHED_IDS) {
+        const toKeep = [...pushedMessageIds].slice(-MAX_PUSHED_IDS / 2);
+        pushedMessageIds.clear();
+        for (const id of toKeep) pushedMessageIds.add(id);
       }
+      ackedIds.push(msg.id);
 
       // Full message log for observability (stderr + file)
       const senderLabel = fromName || msg.from_id;
@@ -1141,11 +896,14 @@ async function pollAndPushMessages() {
       }
     }
 
-    // Expire old pending messages (no retry push — causes duplicates)
-    await expirePendingMessages();
-
-    // Task A: Check delivery status of sent messages
-    await checkSentMessageDelivery();
+    // Ack all successfully pushed messages
+    if (ackedIds.length > 0) {
+      try {
+        await brokerFetch("/ack-messages", { id: myId, message_ids: ackedIds });
+      } catch (e) {
+        log(`Ack failed, will retry next poll: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
   } catch (e) {
     // Broker might be down temporarily, don't crash
     log(`Poll error: ${e instanceof Error ? e.message : String(e)}`);
