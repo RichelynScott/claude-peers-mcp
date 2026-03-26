@@ -25,6 +25,19 @@ import {
 const PROJECT_ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const TEST_BROKER_PORT = 18901;
 const TEST_FEDERATION_PORT = 18900;
+
+/** Force-kill any process holding a port. Prevents cascading failures from interrupted test runs. */
+function killPort(port: number): void {
+  try {
+    const proc = Bun.spawnSync(["lsof", "-ti", `:${port}`], { stdout: "pipe", stderr: "ignore" });
+    const pids = new TextDecoder().decode(proc.stdout).trim();
+    if (pids) {
+      for (const pid of pids.split("\n")) {
+        try { process.kill(parseInt(pid), 9); } catch {}
+      }
+    }
+  } catch {}
+}
 const TEST_DB = `/tmp/claude-peers-federation-test-${crypto.randomUUID()}.db`;
 const TEST_TOKEN_PATH = `/tmp/claude-peers-federation-test-token-${crypto.randomUUID()}`;
 const TEST_CERT_PATH = `/tmp/claude-peers-federation-test-${crypto.randomUUID()}.crt`;
@@ -153,6 +166,10 @@ async function registerPeer(overrides: Record<string, unknown> = {}): Promise<st
 // ---------------------------------------------------------------------------
 
 beforeAll(async () => {
+  // Force-kill any zombie test broker from a previous interrupted run
+  killPort(TEST_BROKER_PORT);
+  killPort(TEST_FEDERATION_PORT);
+
   // Clean up leftover files
   for (const f of [TEST_DB, TEST_TOKEN_PATH, TEST_CERT_PATH, TEST_KEY_PATH]) {
     try { fs.unlinkSync(f); } catch {}

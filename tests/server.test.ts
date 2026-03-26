@@ -14,6 +14,20 @@ import * as fs from "node:fs";
 import * as crypto from "node:crypto";
 
 const TEST_PORT = 19899;
+
+/** Force-kill any process holding a port. Prevents cascading failures from interrupted test runs. */
+function killPort(port: number): void {
+  try {
+    const proc = Bun.spawnSync(["lsof", "-ti", `:${port}`], { stdout: "pipe", stderr: "ignore" });
+    const pids = new TextDecoder().decode(proc.stdout).trim();
+    if (pids) {
+      for (const pid of pids.split("\n")) {
+        try { process.kill(parseInt(pid), 9); } catch {}
+      }
+    }
+  } catch {}
+}
+
 const TEST_DB = `/tmp/claude-peers-server-test-${Date.now()}.db`;
 const TEST_TOKEN_PATH = `/tmp/claude-peers-server-test-token-${Date.now()}`;
 const TEST_TOKEN = crypto.randomBytes(32).toString("hex");
@@ -83,6 +97,9 @@ async function getServerPeerId(): Promise<string> {
 // ---------------------------------------------------------------------------
 
 beforeAll(async () => {
+  // 0. Force-kill any zombie test broker from a previous interrupted run
+  killPort(TEST_PORT);
+
   // 1. Write test token file
   fs.writeFileSync(TEST_TOKEN_PATH, TEST_TOKEN, { mode: 0o600 });
 

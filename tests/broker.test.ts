@@ -9,6 +9,19 @@ import * as fs from "node:fs";
 
 const PROJECT_ROOT = new URL("..", import.meta.url).pathname.replace(/\/$/, "");
 const TEST_PORT = 17899;
+
+/** Force-kill any process holding a port. Prevents cascading failures from interrupted test runs. */
+function killPort(port: number): void {
+  try {
+    const proc = Bun.spawnSync(["lsof", "-ti", `:${port}`], { stdout: "pipe", stderr: "ignore" });
+    const pids = new TextDecoder().decode(proc.stdout).trim();
+    if (pids) {
+      for (const pid of pids.split("\n")) {
+        try { process.kill(parseInt(pid), 9); } catch {}
+      }
+    }
+  } catch {}
+}
 const TEST_DB = "/tmp/claude-peers-test.db";
 const TEST_TOKEN_PATH = `/tmp/claude-peers-test-token-${crypto.randomUUID()}`;
 const BASE = `http://127.0.0.1:${TEST_PORT}`;
@@ -69,6 +82,9 @@ async function registerPeer(overrides: Record<string, unknown> = {}): Promise<st
 // ---------------------------------------------------------------------------
 
 beforeAll(async () => {
+  // Force-kill any zombie test broker from a previous interrupted run
+  killPort(TEST_PORT);
+
   // Clean up leftover test DB
   try {
     fs.unlinkSync(TEST_DB);
