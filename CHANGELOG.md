@@ -36,6 +36,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - **Better Windows LAN IP detection** — uses default route method (`Get-NetIPConfiguration` with gateway) instead of pattern matching that misses `172.16-31.*` and hits VPN adapters. (`54f3a6d`)
 - **WSL2 subnet warning** — broker logs warning when user sets `CLAUDE_PEERS_FEDERATION_SUBNET` to non-`0.0.0.0/0` on WSL2 (unreliable due to NAT IP rewriting). (`54f3a6d`)
 
+### Code Quality (7-model consensus review)
+- 12 issues identified and fixed via multi-model consensus review (GPT-5.4, Grok-4.20, Gemini-3.1-Pro, DeepSeek-v3.2, Minimax-m2.7, Kimi-k2.5, GLM-5):
+  - `sentMessages` Map bounded at MAX_SENT=200 (`server.ts`)
+  - PSK hash comparison uses `timingSafeEqual` to prevent timing side-channel (`mdns.ts`)
+  - `Peer.channel_push` made optional to prevent "undefined" display on remote peers (`types.ts`)
+  - Config file permissions tightened to 0o600 (`config.ts`)
+  - Bug report filename collision fixed for messageId=0 send failures (`server.ts`)
+  - Warned `sentMessages` entries rechecked for late delivery (`server.ts`)
+  - `as any` cast removed in message_status handler (`server.ts`)
+  - Verification timer cleared on shutdown (`server.ts`)
+  - `autoReconnectRemote` capped at 20 attempts and doubled backoff fixed (`broker.ts`)
+  - Federation relay validates message type against allowed set (`broker.ts`)
+  - Buffer overflow force-ack replaced with skip-and-re-poll to preserve deferred ack contract (`server.ts`)
+  - MdnsManager `dedupMap`/`backoffMap` cleaned every 5 minutes (`mdns.ts`)
+
 ### Dependencies
 - Added `bonjour-service@1.3.0` for mDNS auto-discovery (pure JS, no native addons)
 
