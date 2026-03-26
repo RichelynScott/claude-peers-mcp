@@ -222,8 +222,8 @@ describe("Registration", () => {
     const id1 = await registerPeer({ cwd: "/tmp/first" });
     const id2 = await registerPeer({ cwd: "/tmp/second" });
 
-    // IDs should differ (old one was replaced)
-    expect(id1).not.toBe(id2);
+    // IDs should be the same (deterministic from TTY — survives /mcp reconnect)
+    expect(id1).toBe(id2);
 
     // Listing peers should only show the latest registration for this PID
     const res = await post("/list-peers", {
@@ -1039,16 +1039,15 @@ describe("peer eviction on re-register", () => {
     });
     const id2 = ((await res2.json()) as { id: string }).id;
 
-    expect(id2).not.toBe(id1);
+    // Same TTY = same deterministic ID (stable across reconnects)
+    expect(id2).toBe(id1);
 
-    // Old peer should be gone, new peer should have inherited name
+    // Peer should exist with inherited session_name
     const listRes = await post("/list-peers", { scope: "machine" });
     const peers = (await listRes.json()) as Array<{ id: string; session_name: string }>;
-    const oldPeer = peers.find(p => p.id === id1);
-    const newPeer = peers.find(p => p.id === id2);
-    expect(oldPeer).toBeUndefined();
-    expect(newPeer).toBeDefined();
-    expect(newPeer!.session_name).toBe("OriginalSession");
+    const peer = peers.find(p => p.id === id2);
+    expect(peer).toBeDefined();
+    expect(peer!.session_name).toBe("OriginalSession");
   });
 
   test("re-registering with same TTY but different PID evicts old peer (zombie prevention)", async () => {
@@ -1077,9 +1076,10 @@ describe("peer eviction on re-register", () => {
     });
     const id2 = ((await res2.json()) as { id: string }).id;
 
-    expect(id2).not.toBe(id1);
+    // Same TTY = same deterministic ID (stable across reconnects)
+    expect(id2).toBe(id1);
 
-    // Old peer should be evicted — only the new one should exist on this TTY
+    // Only one peer on this TTY — the new registration replaced the old one
     const listRes = await post("/list-peers", { scope: "machine" });
     const peers = (await listRes.json()) as Array<{ id: string; tty: string }>;
     const ttyPeers = peers.filter(p => p.tty === sharedTty);

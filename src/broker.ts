@@ -339,7 +339,7 @@ cleanOrphanedMessages();
 
 // --- Generate peer ID ---
 
-function generateId(): string {
+function generateRandomId(): string {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
   let id = "";
   for (let i = 0; i < 8; i++) {
@@ -348,30 +348,50 @@ function generateId(): string {
   return id;
 }
 
+/**
+ * Generate a deterministic peer ID from the TTY.
+ * This ensures the ID survives /mcp reconnects — same terminal = same ID.
+ * Messages sent to the old ID still arrive after reconnect.
+ * Falls back to random ID if no TTY available.
+ */
+function generateId(tty: string | null): string {
+  if (tty) {
+    const hash = require("crypto").createHash("sha256").update(tty).digest("hex");
+    return hash.slice(0, 8);
+  }
+  return generateRandomId();
+}
+
 // --- Request handlers ---
 
 function handleRegister(body: RegisterRequest): RegisterResponse {
-  const id = generateId();
+  const id = generateId(body.tty ?? null);
   const now = new Date().toISOString();
 
-  // Evict stale peers on re-register: check both PID and TTY.
-  // When a Claude session restarts, it spawns a NEW MCP server with a new PID,
-  // but the OLD MCP server may still be alive (zombie). Evicting by TTY ensures
-  // only one peer per terminal, preventing message theft by zombie processes.
+  // Preserve session_name and summary from previous registration (survives /mcp reconnect)
   let sessionName = body.session_name ?? "";
   let summary = body.summary ?? "";
 
-  // Evict by PID (same process re-registering)
-  const existingByPid = db.query("SELECT id, session_name, summary FROM peers WHERE pid = ?").get(body.pid) as { id: string; session_name: string; summary: string } | null;
+  // Check if this deterministic ID already exists (same TTY reconnecting)
+  const existingById = db.query("SELECT id, session_name, summary FROM peers WHERE id = ?").get(id) as { id: string; session_name: string; summary: string } | null;
+  if (existingById) {
+    if (!sessionName && existingById.session_name) sessionName = existingById.session_name;
+    if (!summary && existingById.summary) summary = existingById.summary;
+    deletePeer.run(existingById.id);
+    brokerLog(`Re-registering peer ${id} (same TTY ${body.tty}, PID ${body.pid})`);
+  }
+
+  // Evict by PID (same process re-registering with different TTY)
+  const existingByPid = db.query("SELECT id, session_name, summary FROM peers WHERE pid = ? AND id != ?").get(body.pid, id) as { id: string; session_name: string; summary: string } | null;
   if (existingByPid) {
     if (!sessionName && existingByPid.session_name) sessionName = existingByPid.session_name;
     if (!summary && existingByPid.summary) summary = existingByPid.summary;
     deletePeer.run(existingByPid.id);
   }
 
-  // Evict by TTY (new process on same terminal — session was restarted)
+  // Evict by TTY (shouldn't happen with deterministic IDs, but safety net)
   if (body.tty) {
-    const existingByTty = db.query("SELECT id, session_name, summary FROM peers WHERE tty = ? AND pid != ?").all(body.tty, body.pid) as Array<{ id: string; session_name: string; summary: string }>;
+    const existingByTty = db.query("SELECT id, session_name, summary FROM peers WHERE tty = ? AND pid != ? AND id != ?").all(body.tty, body.pid, id) as Array<{ id: string; session_name: string; summary: string }>;
     for (const stale of existingByTty) {
       if (!sessionName && stale.session_name) sessionName = stale.session_name;
       if (!summary && stale.summary) summary = stale.summary;
