@@ -43,8 +43,8 @@ tasks/                  # PRDs and project planning files
 | `list_peers(scope)` | Discover peers. Scope: machine/directory/repo/lan |
 | `send_message(to_id, text, type?, metadata?, reply_to?)` | Send message to peer. Remote peers use `hostname:peer_id` format. Tracks delivery. |
 | `broadcast_message(message, scope)` | Send to all peers in scope (machine/directory/repo/lan) |
-| `set_name(name)` | Set session name (from /rename) |
-| `set_summary(summary)` | Set work summary visible to peers |
+| `set_name(name)` | Set session name (from /rename). Auto-regenerates summary with name + TTY prefix. |
+| `set_summary(summary)` | Set work summary visible to peers. Update frequently with specific task descriptions. |
 | `check_messages()` | Poll broker for undelivered messages. Reliable fallback when channel push isn't working. |
 | `message_status(message_id)` | Check delivery status of a previously sent message |
 | `channel_health()` | Diagnose messaging health: broker status, pending messages, dedup state |

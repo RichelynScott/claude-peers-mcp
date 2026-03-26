@@ -78,7 +78,7 @@ Claude: "There's one other session working on the auth module..."
 ```
 /rename AUTH_WORKER
 ```
-This calls `set_name` automatically, so other peers see "AUTH_WORKER" instead of an opaque 8-character ID. Name your sessions based on what they're working on — it makes multi-session collaboration much easier.
+This calls `set_name` automatically, so other peers see "AUTH_WORKER" instead of an opaque 8-character ID. The summary is immediately regenerated with the session name and TTY for disambiguation (e.g., `[AUTH_WORKER:pts/44] recently touched auth.ts in my-project`). Name your sessions based on what they're working on — it makes multi-session collaboration much easier.
 
 ## LAN Federation
 
@@ -297,7 +297,7 @@ claude-peers-mcp/
 
 ## Testing
 
-100 tests, 307 assertions.
+104 tests, 318 assertions.
 
 ```bash
 bun test                           # Run all tests
@@ -335,7 +335,7 @@ This is a fork of [louislva/claude-peers-mcp](https://github.com/louislva/claude
 | Federation CLI | `init`, `join`, `doctor`, `token`, `refresh-wsl2`, connect/disconnect with persistence |
 | Deterministic peer IDs | SHA-256 TTY-based IDs stable across `/mcp` reconnects |
 | Simplified delivery | Push once, ack immediately, dedup via Set, `check_messages` as reliable fallback |
-| Session identification | Persistent session names, auto-summaries with `[SessionName]` prefix, prominent names in `list_peers` |
+| Session identification | Persistent session names, auto-summaries with `[SessionName:TTY]` prefix, registration age in `list_peers`, immediate summary on rename |
 | Startup reliability | 3-attempt retry with backoff, configurable timeout, broker request priority |
 | Structured messages | Message types (text, query, response, handoff, broadcast), JSON metadata, threading |
 | Broadcast messaging | Scoped group messaging to all peers in machine/directory/repo/LAN |
@@ -346,7 +346,7 @@ This is a fork of [louislva/claude-peers-mcp](https://github.com/louislva/claude
 | Rate limiting | 60 req/min per IP on message endpoints |
 | Message safeguards | 10KB size limit, 7-day delivered message cleanup |
 | Zombie prevention | Parent death detection + TTY-based eviction for stale MCP servers |
-| Full test suite | 100 tests, 307 assertions across broker, server, federation, and CLI |
+| Full test suite | 104 tests, 318 assertions across broker, server, federation, and CLI |
 | Observability | Centralized logs in `cpm-logs/`, CLI status command |
 
 ## License

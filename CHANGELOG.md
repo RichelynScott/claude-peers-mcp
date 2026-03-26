@@ -12,6 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - **Broker handler refactor**: Separated 1342-line `broker.ts` monolith into `broker.ts` (524 lines, state/timers/lifecycle) + `broker-handlers.ts` (720 lines, request handlers in factory closures). Architecture validated by 5-model PAL consensus (GPT-5.3-codex, GPT-5.4, Sonnet 4.6, GLM-5, Minimax). (`1805548`)
 - **SIGHUP code hot-reload**: SIGHUP now reloads handler code from disk via dynamic import cache-busting + `Bun.serve().reload()`, in addition to token/config refresh. Connections preserved, rollback on import failure. (`3af8ac2`)
 - **BrokerContext pattern**: All handler state passed via typed `BrokerContext` object (db, 13 prepared statements, Maps, config refs). Enables unit-testable handlers with mock context. (`5b2019a`)
+- **Auto-summary disambiguation**: TTY identifier included in summary prefix (`[CPM_WORKER_2:pts/44]`) so sessions in the same directory are distinguishable. Registration age shown in `list_peers` output (`Active: 2h 15m`). MCP instructions updated to emphasize frequent, specific `set_summary` calls. (`b9d9382`)
+- **Immediate summary on set_name**: Calling `set_name` now auto-regenerates and pushes the summary with the new name. New sessions with a name get a fallback summary (`[Name] Awaiting tasks in project`) instead of nothing. (`b9d9382`)
 
 ### Fixed
 - **Dead route**: Removed duplicate POST `/federation/status` case (unreachable — federation status is GET-only, handled before POST auth check).
