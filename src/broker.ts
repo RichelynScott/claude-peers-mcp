@@ -314,7 +314,7 @@ const selectMessageExists = db.prepare(`
 `);
 
 const markDelivered = db.prepare(`
-  UPDATE messages SET delivered = 1 WHERE id = ?
+  UPDATE messages SET delivered = 1 WHERE id = ? AND to_id = ?
 `);
 
 const deleteDeliveredMessages = db.prepare(`
@@ -637,9 +637,9 @@ function handlePollMessages(body: PollMessagesRequest): PollMessagesResponse {
 }
 
 function handleAckMessages(body: AckMessagesRequest): void {
-  // Phase 2: mark messages as delivered after recipient confirms receipt
+  // Mark messages as delivered — scoped by to_id so peers can only ack their own messages
   for (const mid of body.message_ids) {
-    markDelivered.run(mid);
+    markDelivered.run(mid, body.id);
   }
 }
 

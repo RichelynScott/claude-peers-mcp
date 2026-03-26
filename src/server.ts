@@ -223,6 +223,15 @@ let channelPushVerified = false;
 const pushedMessageIds = new Set<number>();
 const MAX_PUSHED_IDS = 1000;
 
+function rememberPushedId(id: number) {
+  pushedMessageIds.add(id);
+  if (pushedMessageIds.size > MAX_PUSHED_IDS) {
+    const toKeep = [...pushedMessageIds].slice(-MAX_PUSHED_IDS / 2);
+    pushedMessageIds.clear();
+    for (const keptId of toKeep) pushedMessageIds.add(keptId);
+  }
+}
+
 // --- MCP Server ---
 
 const mcp = new Server(
@@ -244,7 +253,7 @@ Available tools:
 - broadcast_message: Send a message to all peers in a scope (machine/directory/repo). Useful for announcements, help requests, or coordination.
 - set_summary: Set a 1-2 sentence summary of what you're working on (visible to other peers)
 - set_name: Set your session name (from /rename). Helps peers identify you by name instead of opaque ID.
-- check_messages: Check for messages. Channel push notifications are unreliable — call this every few minutes or whenever you suspect messages may have been sent to you. Messages are also surfaced automatically when you call any other tool.
+- check_messages: Check for messages. Channel push notifications are unreliable — call this when you are waiting for a reply that hasn't appeared, or periodically every few minutes.
 
 When you start or after using /rename, call set_name with your session name. This helps other instances identify you by name instead of opaque ID. Also call set_summary with [SESSION_NAME] prefix convention: '[MySession] description of work'.
 
@@ -337,7 +346,7 @@ const TOOLS = [
   {
     name: "check_messages",
     description:
-      "Check for messages. Returns any unconfirmed pushed messages AND any new messages from the broker. Use this if channel notifications are not appearing.",
+      "Poll the broker for stored messages and acknowledge them once read. Use this if channel notifications are not appearing.",
     inputSchema: {
       type: "object" as const,
       properties: {},
@@ -381,7 +390,7 @@ const TOOLS = [
   {
     name: "channel_health",
     description:
-      "Diagnose messaging health: broker status, pending messages, delivery failures, and channel push state. Use when messages are not being delivered.",
+      "Diagnose broker status, pending messages, and local dedup state.",
     inputSchema: {
       type: "object" as const,
       properties: {},
@@ -535,15 +544,11 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
           content: [{ type: "text" as const, text: `Message sent to peer ${to_id} (${msgIdTag})\n> Preview: ${preview}` }],
         };
       } catch (e) {
-        // Task B: Auto bug report on send failure
-        const errMsg = e instanceof Error ? e.message : String(e);
-        const failedSent: SentMessage = { messageId: 0, toId: to_id, sentAt: Date.now(), warned: true };
-        writeBugReport(failedSent, "send_failure", errMsg).catch(() => {});
         return {
           content: [
             {
               type: "text" as const,
-              text: `Error sending message: ${errMsg}`,
+              text: `Error sending message: ${e instanceof Error ? e.message : String(e)}`,
             },
           ],
           isError: true,
@@ -625,8 +630,8 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         try {
           await brokerFetch("/ack-messages", { id: myId, message_ids: allIds });
         } catch {}
-        // Add to dedup set
-        for (const id of allIds) pushedMessageIds.add(id);
+        // Add to dedup set (with cap)
+        for (const id of allIds) rememberPushedId(id);
 
         const allMessages = result.messages;
 
@@ -765,34 +770,6 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       report.push("");
       report.push(`Pushed message IDs tracked (dedup): ${pushedMessageIds.size}`);
 
-      // Recent delivery failures
-      try {
-        const failLogExists = await Bun.file(FAILURE_LOG_PATH).exists();
-        if (failLogExists) {
-          const content = await Bun.file(FAILURE_LOG_PATH).text();
-          const lines = content.trim().split("\n").filter(l => l.trim());
-          const recent = lines.slice(-5);
-          if (recent.length > 0) {
-            report.push("");
-            report.push(`Recent delivery failures (last ${recent.length}):`);
-            for (const line of recent) {
-              report.push(`  ${line}`);
-            }
-          }
-        }
-      } catch {}
-
-      // Bug reports count
-      try {
-        const dirExists = require("fs").existsSync(BUG_REPORT_DIR);
-        if (dirExists) {
-          const files = require("fs").readdirSync(BUG_REPORT_DIR).filter((f: string) => f.endsWith(".md"));
-          if (files.length > 0) {
-            report.push("");
-            report.push(`Bug reports: ${files.length} in BUG_REPORTS/`);
-          }
-        }
-      } catch {}
 
       return {
         content: [{ type: "text" as const, text: report.join("\n") }],
@@ -813,29 +790,28 @@ async function pollAndPushMessages() {
     const result = await brokerFetch<PollMessagesResponse>("/poll-messages", { id: myId });
     const ackedIds: number[] = [];
 
+    // Fetch peer list once per poll cycle (not per message) for sender context
+    let peersById = new Map<string, Peer>();
+    if (result.messages.length > 0) {
+      try {
+        const peers = await brokerFetch<Peer[]>("/list-peers", {
+          scope: "lan",
+          cwd: myCwd,
+          git_root: myGitRoot,
+        });
+        peersById = new Map(peers.map(p => [p.id, p]));
+      } catch {}
+    }
+
     for (const msg of result.messages) {
       // Skip messages already pushed (permanent dedup — never push same message twice)
       if (pushedMessageIds.has(msg.id)) continue;
 
-      // Look up the sender's info for context
-      let fromSummary = "";
-      let fromCwd = "";
-      let fromName = "";
-      try {
-        const peers = await brokerFetch<Peer[]>("/list-peers", {
-          scope: "machine",
-          cwd: myCwd,
-          git_root: myGitRoot,
-        });
-        const sender = peers.find((p) => p.id === msg.from_id);
-        if (sender) {
-          fromSummary = sender.summary;
-          fromCwd = sender.cwd;
-          fromName = sender.session_name ?? "";
-        }
-      } catch {
-        // Non-critical, proceed without sender info
-      }
+      // Look up sender from cached peer list
+      const sender = peersById.get(msg.from_id);
+      const fromName = sender?.session_name ?? "";
+      const fromSummary = sender?.summary ?? "";
+      const fromCwd = sender?.cwd ?? "";
 
       // Push as channel notification — this is what makes it immediate.
       // IMPORTANT: Claude Code silently drops notifications with null meta values.
@@ -867,12 +843,7 @@ async function pollAndPushMessages() {
       }
 
       // Mark as pushed (dedup) and queue for immediate ack
-      pushedMessageIds.add(msg.id);
-      if (pushedMessageIds.size > MAX_PUSHED_IDS) {
-        const toKeep = [...pushedMessageIds].slice(-MAX_PUSHED_IDS / 2);
-        pushedMessageIds.clear();
-        for (const id of toKeep) pushedMessageIds.add(id);
-      }
+      rememberPushedId(msg.id);
       ackedIds.push(msg.id);
 
       // Full message log for observability (stderr + file)
