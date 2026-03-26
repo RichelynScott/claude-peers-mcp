@@ -856,14 +856,18 @@ async function handleFederationConnect(body: FederationConnectRequest): Promise<
 }
 
 // US-002: Auto-reconnect to a saved remote with exponential backoff
+const MAX_AUTO_RECONNECT_ATTEMPTS = 20;
+
 function autoReconnectRemote(host: string, port: number, label?: string) {
   const key = `${host}:${port}`;
-  const delays = [0, 5000, 15000, 45000]; // then 60s forever
+  const delays = [0, 5000, 15000, 45000]; // then 60s until max attempts
   let attemptNum = 0;
 
   async function attempt() {
-    const delay = attemptNum < delays.length ? delays[attemptNum] : 60000;
-    if (delay > 0) await new Promise(r => setTimeout(r, delay));
+    if (attemptNum > 0) {
+      const delay = attemptNum < delays.length ? delays[attemptNum] : 60000;
+      await new Promise(r => setTimeout(r, delay));
+    }
 
     if (remoteMachines.has(key)) {
       federationLog(`Auto-reconnect to ${key}: already connected`);
@@ -876,13 +880,18 @@ function autoReconnectRemote(host: string, port: number, label?: string) {
         federationLog(`Auto-reconnected to ${key} (${result.hostname ?? label ?? "unknown"}) on attempt ${attemptNum + 1}`);
         return;
       }
-      federationLog(`Auto-reconnect to ${key} attempt ${attemptNum + 1} failed: ${result.error}`);
+      federationLog(`Auto-reconnect to ${key} attempt ${attemptNum + 1}/${MAX_AUTO_RECONNECT_ATTEMPTS} failed: ${result.error}`);
     } catch (e) {
-      federationLog(`Auto-reconnect to ${key} attempt ${attemptNum + 1} error: ${e instanceof Error ? e.message : String(e)}`);
+      federationLog(`Auto-reconnect to ${key} attempt ${attemptNum + 1}/${MAX_AUTO_RECONNECT_ATTEMPTS} error: ${e instanceof Error ? e.message : String(e)}`);
+    }
+
+    attemptNum++;
+    if (attemptNum >= MAX_AUTO_RECONNECT_ATTEMPTS) {
+      federationLog(`Auto-reconnect to ${key}: giving up after ${MAX_AUTO_RECONNECT_ATTEMPTS} attempts`);
+      return;
     }
 
     // Schedule next retry via setTimeout (not recursion — prevents stack growth)
-    attemptNum++;
     const nextDelay = attemptNum < delays.length ? delays[attemptNum] : 60000;
     setTimeout(attempt, nextDelay);
   }
@@ -1117,8 +1126,9 @@ async function handleFederationRequest(req: Request, server: any): Promise<Respo
           }
         }
 
-        // Insert the relayed message
-        const msgType = relayReq.type ?? "text";
+        // Insert the relayed message (validate type to prevent injection)
+        const VALID_RELAY_TYPES = new Set(["text", "query", "response", "handoff", "broadcast"]);
+        const msgType = VALID_RELAY_TYPES.has(relayReq.type ?? "text") ? (relayReq.type ?? "text") : "text";
         const metadataStr = relayReq.metadata ? JSON.stringify(relayReq.metadata) : null;
         const result = insertMessage.run(
           relayReq.from_id, relayReq.to_id, relayReq.text,

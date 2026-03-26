@@ -269,6 +269,7 @@ interface SentMessage {
 }
 
 const sentMessages = new Map<number, SentMessage>();
+const MAX_SENT = 200;
 const DELIVERY_CHECK_DELAY_MS = 30_000; // Sender checks after 30s — must be shorter than OPTIMISTIC_CONFIRM_MS
 const SENT_MESSAGE_TTL_MS = 300_000; // Clean up after 5 min
 const deliveryWarnings: string[] = []; // Warnings to inject into next tool response (max 20)
@@ -284,9 +285,14 @@ async function checkSentMessageDelivery() {
       sentMessages.delete(id);
       continue;
     }
-    // Check messages older than 30s that haven't been warned about
-    if (!sent.warned && now - sent.sentAt > DELIVERY_CHECK_DELAY_MS) {
-      toCheck.push(sent);
+    // Check unwarned messages older than 30s, and recheck warned ones every 60s for late delivery
+    if (now - sent.sentAt > DELIVERY_CHECK_DELAY_MS) {
+      if (!sent.warned) {
+        toCheck.push(sent);
+      } else if (now - sent.sentAt > DELIVERY_CHECK_DELAY_MS * 2) {
+        // Recheck warned messages — if delivered late, clean up
+        toCheck.push(sent);
+      }
     }
   }
 
@@ -336,7 +342,8 @@ const FAILURE_LOG_PATH = `${CPM_LOG_DIR}/delivery-failures.log`;
 
 async function writeBugReport(sent: SentMessage, reason: string, error?: string) {
   const timestamp = new Date().toISOString();
-  const filename = `${timestamp.replace(/[:.]/g, "-")}_msg${sent.messageId}.md`;
+  const msgLabel = sent.messageId > 0 ? `msg${sent.messageId}` : `failure-${Date.now()}`;
+  const filename = `${timestamp.replace(/[:.]/g, "-")}_${msgLabel}.md`;
 
   // Gather diagnostics (best-effort, short timeout — don't block error path)
   let brokerHealth = "unknown";
@@ -688,7 +695,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         }
 
         // Task A: Track sent message for delivery confirmation
-        if (result.message_id != null) {
+        if (result.message_id != null && sentMessages.size < MAX_SENT) {
           sentMessages.set(result.message_id, {
             messageId: result.message_id,
             toId: to_id,
@@ -905,8 +912,8 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
       try {
         const status = await brokerFetch<{ id: number; from_id: string; to_id: string; delivered: boolean; sent_at: string; error?: string }>("/message-status", { message_id });
-        if ((status as any).error) {
-          return { content: [{ type: "text" as const, text: `Message #${message_id} not found` }] };
+        if (status.error) {
+          return { content: [{ type: "text" as const, text: `Message #${message_id}: ${status.error}` }] };
         }
         const state = status.delivered ? "confirmed" : "unconfirmed";
         return {
@@ -1290,7 +1297,7 @@ async function main() {
   }
 
   // Set a timer: if no tool call within 10s, mark as unverified
-  setTimeout(async () => {
+  const verificationTimer = setTimeout(async () => {
     if (!channelPushVerified) {
       log("Channel push verification: no tool call within 10s — marking as unverified");
       try { await brokerFetch("/set-channel-push", { id: myId, status: "unverified" }); } catch {}
@@ -1333,6 +1340,7 @@ async function main() {
   const cleanup = async () => {
     clearInterval(pollTimer);
     clearInterval(heartbeatTimer);
+    clearTimeout(verificationTimer);
     if (parentCheckTimer) clearInterval(parentCheckTimer);
     if (myId) {
       try {

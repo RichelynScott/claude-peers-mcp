@@ -95,6 +95,6 @@ export function loadConfig(): PeersConfig {
  */
 export function writeConfig(config: PeersConfig): void {
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + "\n", {
-    mode: 0o644,
+    mode: 0o600, // Restrict access — config may contain LAN topology (remotes, IPs)
   });
 }

@@ -6,7 +6,7 @@
  * Falls back gracefully when mDNS is unavailable (WSL2 NAT, missing package).
  */
 
-import { createHash } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { federationLog, isWSL2 } from "./federation.ts";
 import type { RemoteMachine } from "./shared/types.ts";
 
@@ -159,9 +159,11 @@ export class MdnsManager {
       return;
     }
 
-    // PSK hash pre-filter
-    if (remotePskHash !== this.localPskHash) {
-      federationLog(`mDNS: skipping ${remoteHostname} (PSK mismatch: local=${this.localPskHash} remote=${remotePskHash})`);
+    // PSK hash pre-filter (constant-time comparison to prevent timing side-channel)
+    const pskMatch = remotePskHash && remotePskHash.length === this.localPskHash.length &&
+      timingSafeEqual(Buffer.from(remotePskHash), Buffer.from(this.localPskHash));
+    if (!pskMatch) {
+      federationLog(`mDNS: skipping ${remoteHostname} (PSK mismatch)`);
       return;
     }
 
