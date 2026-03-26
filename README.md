@@ -271,14 +271,15 @@ All local communication (server-to-broker, CLI-to-broker) uses bearer token auth
 ```
 claude-peers-mcp/
   src/
-    broker.ts              # HTTP broker daemon + SQLite + federation TLS server
+    broker.ts              # Broker state, timers, server lifecycle, SIGHUP hot-reload
+    broker-handlers.ts     # Request handlers in factory closures (hot-reloadable)
     server.ts              # MCP stdio server + channel push + simple push-ack
     cli.ts                 # CLI utility (federation init/join/doctor/refresh-wsl2)
     federation.ts          # TLS cert generation, HMAC signing, subnet filtering
     mdns.ts                # mDNS auto-discovery via bonjour-service
     index.ts               # Package entry point
     shared/
-      types.ts             # TypeScript interfaces
+      types.ts             # TypeScript interfaces + BrokerContext/BrokerStatements
       token.ts             # Shared bearer token reader
       summarize.ts         # Deterministic git-based auto-summary
       config.ts            # Config file reader/writer (~/.claude-peers-config.json)

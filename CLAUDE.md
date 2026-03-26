@@ -6,18 +6,19 @@ Peer discovery and messaging MCP for Claude Code instances. Supports LAN federat
 
 ```
 src/                    # Source code
-  broker.ts             # Singleton HTTP daemon (localhost:7899) + SQLite + federation TLS server
+  broker.ts             # Broker state, timers, server lifecycle, SIGHUP hot-reload (524 lines)
+  broker-handlers.ts    # Request handlers in factory closures — hot-reloadable (720 lines)
   server.ts             # MCP stdio server (one per Claude Code instance) + channel push + simple push-ack
   cli.ts                # CLI utility (federation init/join/doctor/refresh-wsl2)
   federation.ts         # TLS cert gen, HMAC signing, subnet utils, curl-based TLS fetch
   mdns.ts               # mDNS auto-discovery via bonjour-service
   index.ts              # Entry point
   shared/
-    types.ts            # All TypeScript interfaces
+    types.ts            # All TypeScript interfaces + BrokerContext/BrokerStatements
     token.ts            # Shared token file reader for auth
     summarize.ts        # Deterministic git-based auto-summary (no external APIs)
     config.ts           # Config file reader/writer (~/.claude-peers-config.json)
-tests/                  # Test suites (100 tests, 307 assertions)
+tests/                  # Test suites (104 tests, 318 assertions)
   broker.test.ts        # Broker + federation endpoint tests (43 tests)
   cli.test.ts           # CLI + auto-summary tests (17 tests)
   server.test.ts        # MCP server integration tests (18 tests)
@@ -85,7 +86,7 @@ Default to Bun, not Node.js.
 ## Testing
 
 ```bash
-bun test                           # All 100 tests, 307 assertions
+bun test                           # All 104 tests, 318 assertions
 bun test tests/broker.test.ts      # Broker + federation endpoints (43)
 bun test tests/server.test.ts      # MCP server integration (18)
 bun test tests/federation.test.ts  # Federation TLS/PSK/HMAC (22)
@@ -98,12 +99,13 @@ bun test tests/cli.test.ts         # CLI + auto-summary (17)
 |------|---------|
 | `CHANGELOG.md` | Version history |
 | `CLAUDE.md` | This file — project instructions |
-| `src/broker.ts` | HTTP server + SQLite + federation TLS + /message-status |
+| `src/broker.ts` | Broker state, db, timers, server lifecycle, SIGHUP hot-reload (524 lines) |
+| `src/broker-handlers.ts` | Request handler factories — `createBrokerFetch(ctx)` + `createFederationFetch(ctx)` (720 lines) |
 | `src/server.ts` | MCP server + simple push-ack + channel push + session name persistence |
 | `src/cli.ts` | CLI: init, join, token, doctor, refresh-wsl2, connect, status |
 | `src/mdns.ts` | mDNS auto-discovery via bonjour-service |
 | `src/federation.ts` | TLS cert gen, HMAC, subnet, curl fetch, WSL2 detection |
-| `src/shared/types.ts` | All TypeScript interfaces |
+| `src/shared/types.ts` | All TypeScript interfaces + BrokerContext/BrokerStatements |
 | `src/shared/config.ts` | Config file reader/writer with remotes/mdns support |
 | `src/shared/summarize.ts` | Git-based auto-summary with session name support |
 

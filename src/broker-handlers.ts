@@ -588,9 +588,7 @@ export function createBrokerFetch(ctx: BrokerContext): (req: Request) => Respons
           ctx.stmts.deletePeer.run((body as { id: string }).id);
           return Response.json({ ok: true });
 
-        // Federation local-facing endpoints
-        case "/federation/status":
-          return Response.json(handleFederationStatus(ctx));
+        // Federation local-facing endpoints (status is GET-only, handled above)
         case "/federation/connect":
           return Response.json(await handleFederationConnect(ctx, body as FederationConnectRequest));
         case "/federation/disconnect":

@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-03-26
+
+### Changed
+- **Broker handler refactor**: Separated 1342-line `broker.ts` monolith into `broker.ts` (524 lines, state/timers/lifecycle) + `broker-handlers.ts` (720 lines, request handlers in factory closures). Architecture validated by 5-model PAL consensus (GPT-5.3-codex, GPT-5.4, Sonnet 4.6, GLM-5, Minimax). (`1805548`)
+- **SIGHUP code hot-reload**: SIGHUP now reloads handler code from disk via dynamic import cache-busting + `Bun.serve().reload()`, in addition to token/config refresh. Connections preserved, rollback on import failure. (`3af8ac2`)
+- **BrokerContext pattern**: All handler state passed via typed `BrokerContext` object (db, 13 prepared statements, Maps, config refs). Enables unit-testable handlers with mock context. (`5b2019a`)
+
+### Fixed
+- **Dead route**: Removed duplicate POST `/federation/status` case (unreachable — federation status is GET-only, handled before POST auth check).
+
 ## [0.5.0] - 2026-03-26 — Stable Release
 
 ### Summary
