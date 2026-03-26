@@ -215,6 +215,7 @@ function getTty(): string | null {
 let myId: PeerId | null = null;
 let myCwd = process.cwd();
 let myGitRoot: string | null = null;
+let mySessionName: string = "";
 let channelPushVerified = false;
 
 // --- Simple message dedup ---
@@ -437,18 +438,19 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         }
 
         const lines = peers.map((p) => {
-          const parts = [
-            `ID: ${p.id}`,
-            `PID: ${p.pid}`,
-            `CWD: ${p.cwd}`,
+          // Name is the header — most prominent element
+          const header = p.session_name
+            ? `**${p.session_name}** (${p.id})`
+            : `${p.id} (unnamed)`;
+          const details = [
+            `  PID: ${p.pid}  |  CWD: ${p.cwd}`,
           ];
-          if (p.session_name) parts.unshift(`Name: ${p.session_name}`);
-          if (p.git_root) parts.push(`Repo: ${p.git_root}`);
-          if (p.tty) parts.push(`TTY: ${p.tty}`);
-          if (p.summary) parts.push(`Summary: ${p.summary}`);
-          if (p.channel_push && p.channel_push !== "working") parts.push(`Channel push: ${p.channel_push}`);
-          parts.push(`Last seen: ${p.last_seen}`);
-          return parts.join("\n  ");
+          if (p.git_root) details.push(`  Repo: ${p.git_root}`);
+          if (p.tty) details.push(`  TTY: ${p.tty}`);
+          if (p.summary) details.push(`  Summary: ${p.summary}`);
+          if (p.channel_push && p.channel_push !== "working") details.push(`  Channel push: ${p.channel_push}`);
+          details.push(`  Last seen: ${p.last_seen}`);
+          return `${header}\n${details.join("\n")}`;
         });
 
         return {
@@ -592,6 +594,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       }
       try {
         await brokerFetch("/set-name", { id: myId, session_name: sessionName });
+        mySessionName = sessionName;
         return {
           content: [{ type: "text" as const, text: `Session name set: "${sessionName}"` }],
         };
@@ -942,6 +945,7 @@ async function main() {
         git_root: myGitRoot,
         git_branch: branch,
         recent_files: recentFiles,
+        session_name: mySessionName || null,
       });
       if (summary) {
         initialSummary = summary;
@@ -964,6 +968,7 @@ async function main() {
     git_root: myGitRoot,
     tty,
     summary: initialSummary,
+    session_name: mySessionName || undefined,
   };
 
   let reg: RegisterResponse | null = null;

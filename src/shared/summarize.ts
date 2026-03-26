@@ -10,6 +10,7 @@ export async function generateSummary(context: {
   git_root: string | null;
   git_branch?: string | null;
   recent_files?: string[];
+  session_name?: string | null;
 }): Promise<string | null> {
   const parts: string[] = [];
 
@@ -17,9 +18,11 @@ export async function generateSummary(context: {
   const dir = context.git_root || context.cwd;
   const projectName = dir.split("/").pop() || dir;
 
+  const branch = context.git_branch || "main";
+
   // Branch info
   if (context.git_branch && context.git_branch !== "main" && context.git_branch !== "master") {
-    parts.push(`On branch ${context.git_branch}`);
+    parts.push(`on ${context.git_branch}`);
   }
 
   // Recent file activity
@@ -28,11 +31,16 @@ export async function generateSummary(context: {
     parts.push(`recently touched ${fileList}`);
   }
 
+  // Build prefix: [SessionName] or [project:branch]
+  const prefix = context.session_name
+    ? `[${context.session_name}]`
+    : `[${projectName}:${branch}]`;
+
   if (parts.length === 0) {
-    return `Working in ${projectName}`;
+    return `${prefix} Working in ${projectName}`;
   }
 
-  return `[${projectName}:${context.git_branch || "main"}] ${parts.join(". ")}`;
+  return `${prefix} ${parts.join(", ")} in ${projectName}`;
 }
 
 /**
