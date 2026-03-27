@@ -23,12 +23,13 @@
     "model-context-protocol"
   ],
   "bin": {
-    "claude-peers": "./src/cli.ts"
+    "claude-peers": "./dist/cli.js"
   },
   "module": "src/index.ts",
   "type": "module",
   "files": [
     "src/",
+    "dist/",
     "README.md",
     "LICENSE",
     "CHANGELOG.md",
@@ -44,6 +45,8 @@
     "broker": "bun src/broker.ts",
     "server": "bun src/server.ts",
     "cli": "bun src/cli.ts",
+    "build": "bun build ./src/cli.ts --target=bun --outfile=dist/cli.js",
+    "prepublishOnly": "bun run build",
     "test": "bun test"
   },
   "devDependencies": {
