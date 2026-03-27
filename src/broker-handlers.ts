@@ -69,6 +69,7 @@ function handleRegister(ctx: BrokerContext, body: RegisterRequest): RegisterResp
 
   let sessionName = body.session_name ?? "";
   let summary = body.summary ?? "";
+  const version = body.version ?? "";
 
   const existingById = ctx.db.query("SELECT id, session_name, summary FROM peers WHERE id = ?").get(id) as { id: string; session_name: string; summary: string } | null;
   if (existingById) {
@@ -95,7 +96,7 @@ function handleRegister(ctx: BrokerContext, body: RegisterRequest): RegisterResp
     }
   }
 
-  ctx.stmts.insertPeer.run(id, body.pid, body.cwd, body.git_root, body.tty, sessionName, summary, now, now);
+  ctx.stmts.insertPeer.run(id, body.pid, body.cwd, body.git_root, body.tty, sessionName, summary, version, now, now);
   return { id, session_name: sessionName || undefined };
 }
 

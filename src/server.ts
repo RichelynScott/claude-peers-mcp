@@ -38,6 +38,13 @@ import { loadConfig } from "./shared/config.ts";
 
 // --- Configuration ---
 
+const PKG_VERSION = (() => {
+  try {
+    const pkg = require(new URL("../package.json", import.meta.url).pathname);
+    return pkg.version ?? "unknown";
+  } catch { return "unknown"; }
+})();
+
 const BROKER_PORT = parseInt(process.env.CLAUDE_PEERS_PORT ?? "7899", 10);
 const BROKER_URL = `http://127.0.0.1:${BROKER_PORT}`;
 const POLL_INTERVAL_MS = 1000;
@@ -508,6 +515,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
             `  PID: ${p.pid}  |  CWD: ${p.cwd}${ageTag}`,
           ];
           if (p.git_root) details.push(`  Repo: ${p.git_root}`);
+          if (p.version) details.push(`  Version: ${p.version}`);
           if (p.tty) details.push(`  TTY: ${p.tty}`);
           if (p.summary) details.push(`  Summary: ${p.summary}`);
           if (p.channel_push && p.channel_push !== "working") details.push(`  Channel push: ${p.channel_push}`);
@@ -1018,6 +1026,7 @@ async function attemptBrokerReconnect() {
       tty,
       summary: "",
       session_name: mySessionName || undefined,
+      version: PKG_VERSION,
     };
 
     const reg = await brokerFetch<{ id: PeerId }>("/register", registerBody);
@@ -1128,6 +1137,7 @@ async function main() {
     tty,
     summary: initialSummary,
     session_name: mySessionName || undefined,
+    version: PKG_VERSION,
   };
 
   let reg: RegisterResponse | null = null;

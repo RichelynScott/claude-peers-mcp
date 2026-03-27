@@ -12,6 +12,7 @@ export interface Peer {
   tty: string | null;
   session_name: string;
   summary: string;
+  version?: string;
   channel_push?: "unknown" | "unverified" | "working";
   registered_at: string; // ISO timestamp
   last_seen: string; // ISO timestamp
@@ -38,6 +39,7 @@ export interface RegisterRequest {
   tty: string | null;
   session_name: string;
   summary: string;
+  version?: string;
 }
 
 export interface RegisterResponse {

@@ -155,6 +155,7 @@ db.run(`
 `);
 
 try { db.run("ALTER TABLE peers ADD COLUMN channel_push TEXT DEFAULT 'unknown'"); } catch {}
+try { db.run("ALTER TABLE peers ADD COLUMN version TEXT DEFAULT ''"); } catch {}
 try { db.run("ALTER TABLE messages ADD COLUMN type TEXT NOT NULL DEFAULT 'text'"); } catch {}
 try { db.run("ALTER TABLE messages ADD COLUMN metadata TEXT DEFAULT NULL"); } catch {}
 try { db.run("ALTER TABLE messages ADD COLUMN reply_to INTEGER DEFAULT NULL"); } catch {}
@@ -163,8 +164,8 @@ try { db.run("ALTER TABLE messages ADD COLUMN reply_to INTEGER DEFAULT NULL"); }
 
 const stmts = {
   insertPeer: db.prepare(`
-    INSERT INTO peers (id, pid, cwd, git_root, tty, session_name, summary, registered_at, last_seen)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO peers (id, pid, cwd, git_root, tty, session_name, summary, version, registered_at, last_seen)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
   updateLastSeen: db.prepare(`UPDATE peers SET last_seen = ? WHERE id = ?`),
   updateSummary: db.prepare(`UPDATE peers SET summary = ? WHERE id = ?`),
