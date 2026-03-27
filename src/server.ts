@@ -1240,6 +1240,53 @@ async function main() {
     }
   }, 30_000);
 
+  // 7c. Safety-net polling — catch messages that channel push missed
+  // Even when channel push is "working", periodically check for undelivered
+  // messages in the broker that weren't picked up by the main poll loop.
+  // This catches edge cases where poll+push succeeded but the message was
+  // somehow not rendered by Claude Code.
+  const SAFETY_NET_INTERVAL_MS = 30_000;
+  const safetyNetTimer = setInterval(async () => {
+    if (!myId) return;
+    try {
+      const result = await brokerFetch<PollMessagesResponse>("/poll-messages", { id: myId });
+      if (result.messages.length === 0) return;
+
+      let newQueued = 0;
+      for (const msg of result.messages) {
+        // Skip already-pushed messages (dedup)
+        if (pushedMessageIds.has(msg.id)) continue;
+        rememberPushedId(msg.id);
+
+        // Queue for piggyback delivery instead of trying channel push again
+        if (queuedMessages.length < MAX_QUEUED) {
+          queuedMessages.push({
+            from_id: msg.from_id,
+            from_name: "",  // No peer lookup for safety net — keep it lightweight
+            text: msg.text,
+            type: msg.type || "text",
+            message_id: msg.id,
+            sent_at: msg.sent_at,
+            pushedAt: Date.now(),
+          });
+          newQueued++;
+        }
+      }
+
+      // Ack all messages we just queued
+      const allIds = result.messages.filter(m => !pushedMessageIds.has(m.id) || newQueued > 0).map(m => m.id);
+      if (allIds.length > 0) {
+        try { await brokerFetch("/ack-messages", { id: myId, message_ids: allIds }); } catch {}
+      }
+
+      if (newQueued > 0) {
+        log(`Safety net: queued ${newQueued} missed message(s) for piggyback delivery`);
+      }
+    } catch {
+      // Non-critical — broker may be temporarily unavailable
+    }
+  }, SAFETY_NET_INTERVAL_MS);
+
   // 8. Start heartbeat
   const heartbeatTimer = setInterval(async () => {
     if (myId) {
@@ -1273,6 +1320,7 @@ async function main() {
   const cleanup = async () => {
     clearInterval(pollTimer);
     clearInterval(heartbeatTimer);
+    clearInterval(safetyNetTimer);
     clearTimeout(verificationTimer);
     if (parentCheckTimer) clearInterval(parentCheckTimer);
     if (myId) {
