@@ -25,11 +25,19 @@ Multiple Claude Code sessions can find each other, exchange messages in real tim
 
 Requires [Bun](https://bun.sh) (v1.1+).
 
+**Option A — npm/bun package:**
+```bash
+bun add -g claude-peers
+```
+
+**Option B — from source:**
 ```bash
 git clone https://github.com/RichelynScott/claude-peers-mcp.git
 cd claude-peers-mcp
 bun install
 ```
+
+After installing via npm, the CLI is available as `bunx claude-peers`.
 
 ### 2. Register the MCP server
 

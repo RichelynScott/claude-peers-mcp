@@ -9,7 +9,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ## [0.7.0] - 2026-03-27 — npm Publish Ready
 
 ### Added
-- **npm publish prep** — `files` field in package.json specifying published contents (src/, README, LICENSE, CHANGELOG, GETTING_STARTED, SECURITY, CONTRIBUTING, docs/). Package is ready for `npm publish` / `bun publish`. (`d34454a`)
+- **npm publish prep** — `files` field in package.json specifying published contents (src/, dist/, README, LICENSE, CHANGELOG, GETTING_STARTED, SECURITY, CONTRIBUTING, docs/). Package is ready for `bun publish`. (`d34454a`)
+- **Bundled CLI binary** — `bun build` compiles `src/cli.ts` into a single `dist/cli.js` with shebang for direct execution. `bin` entry points to the bundled output. Build runs automatically via `prepublishOnly` on publish. (`8933b26`)
 
 ## [0.6.2] - 2026-03-27
 

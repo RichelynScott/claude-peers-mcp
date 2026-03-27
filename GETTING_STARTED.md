@@ -8,15 +8,21 @@ A step-by-step guide to get peer messaging working between your Claude Code sess
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) 2.1+ installed
 - A Claude.ai login (API-key-only auth does not support channel push)
 
-## Step 1: Clone and install
+## Step 1: Install
 
+**Option A — npm/bun package:**
+```bash
+bun add -g claude-peers
+```
+
+**Option B — from source:**
 ```bash
 git clone https://github.com/RichelynScott/claude-peers-mcp.git
 cd claude-peers-mcp
 bun install
 ```
 
-Expected output:
+Expected output (from source):
 ```
 bun install v1.x.x
 Resolving dependencies... done
