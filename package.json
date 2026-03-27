@@ -1,18 +1,39 @@
 {
   "name": "claude-peers",
   "version": "0.6.0",
-  "description": "Peer discovery and messaging for Claude Code instances",
+  "description": "Peer discovery and messaging for Claude Code instances — same machine or across LAN",
   "author": "RichelynScott",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/RichelynScott/claude-peers-mcp.git"
   },
+  "homepage": "https://github.com/RichelynScott/claude-peers-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/RichelynScott/claude-peers-mcp/issues"
+  },
+  "keywords": [
+    "claude",
+    "claude-code",
+    "mcp",
+    "peer-discovery",
+    "messaging",
+    "multi-agent",
+    "federation",
+    "model-context-protocol"
+  ],
+  "bin": {
+    "claude-peers": "./src/cli.ts"
+  },
   "module": "src/index.ts",
   "type": "module",
+  "engines": {
+    "bun": ">=1.1.0"
+  },
   "scripts": {
     "broker": "bun src/broker.ts",
     "server": "bun src/server.ts",
+    "cli": "bun src/cli.ts",
     "test": "bun test"
   },
   "devDependencies": {
