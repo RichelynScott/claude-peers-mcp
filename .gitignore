@@ -64,3 +64,4 @@ BUG_REPORTS/
 
 # Worker file-based communications (fallback when CPM is unstable)
 WORKER_COMMS/
+CPM_INBOX/
