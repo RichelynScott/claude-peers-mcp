@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-03-27
+
+### Fixed
+- **Safety-net channel push for idle sessions** — safety-net polling (every 30s) now attempts channel push directly before falling back to piggyback queue. Previously, idle sessions with no tool calls would never receive piggybacked messages. Now the safety-net retries channel push, giving idle sessions a delivery path without requiring active tool calls. Fixes the #1 reliability complaint: messages silently dropped to idle sessions. (`d78b60e`)
+
 ## [0.6.1] - 2026-03-27
 
 ### Added

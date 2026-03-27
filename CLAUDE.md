@@ -187,6 +187,7 @@ bun test tests/cli.test.ts         # CLI + auto-summary (17)
 - **Channel notifications after /mcp reconnect**: `/mcp` reconnect restores tool access but may not re-establish channel subscriptions. Full session restart required for channel push. Piggyback and safety-net layers still work regardless.
 - **WSL2 mDNS**: mDNS auto-discovery does not work on WSL2 NAT mode (multicast blocked by Hyper-V). Use `federation init` + `federation join` instead. Mirrored mode may work but is unreliable.
 - **Channel push verification is heuristic**: `channel_push: "working"` means a tool call occurred within 10s of startup — it proves session activity, not notification delivery. Treat as best-effort signal.
+- **Idle session delivery** (mitigated in v0.6.2): Previously, idle sessions (no active tool calls) could miss messages because piggyback only fires on tool calls. Safety-net polling now retries channel push directly every 30s, providing a delivery path for idle sessions.
 
 ## Deferred Optimizations
 
