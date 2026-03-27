@@ -1298,7 +1298,7 @@ async function main() {
   // (if no tool call happened in 2 min, the messages would never be surfaced)
   const queueCleanupTimer = setInterval(() => {
     const now = Date.now();
-    const staleThreshold = 120_000; // 2 minutes
+    const staleThreshold = 600_000; // 10 minutes — gives model time to make a tool call
     let cleaned = 0;
     for (let i = queuedMessages.length - 1; i >= 0; i--) {
       if (now - queuedMessages[i].pushedAt > staleThreshold) {
