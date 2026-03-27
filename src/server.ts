@@ -1323,35 +1323,64 @@ async function main() {
       const result = await brokerFetch<PollMessagesResponse>("/poll-messages", { id: myId });
       if (result.messages.length === 0) return;
 
-      let newQueued = 0;
+      const ackedIds: number[] = [];
+      let pushed = 0;
+      let queued = 0;
+
       for (const msg of result.messages) {
         // Skip already-pushed messages (dedup)
         if (pushedMessageIds.has(msg.id)) continue;
-        rememberPushedId(msg.id);
 
-        // Queue for piggyback delivery instead of trying channel push again
+        // Attempt channel push FIRST — this is the fix for idle sessions.
+        // Previously safety-net only queued for piggyback, which requires a
+        // tool call. Idle sessions have no tool calls, so messages were stuck.
+        try {
+          await mcp.notification({
+            method: "notifications/claude/channel",
+            params: {
+              content: msg.text,
+              meta: {
+                from_id: msg.from_id,
+                from_name: "",
+                from_summary: "",
+                from_cwd: "",
+                type: msg.type || "text",
+                message_id: String(msg.id),
+                ...(msg.sent_at ? { sent_at: msg.sent_at } : {}),
+                ...(msg.reply_to ? { reply_to: String(msg.reply_to) } : {}),
+              },
+            },
+          });
+          pushed++;
+        } catch {
+          // Channel push failed — piggyback below will catch it
+        }
+
+        rememberPushedId(msg.id);
+        ackedIds.push(msg.id);
+
+        // ALSO queue for piggyback as second layer (in case push didn't render)
         if (queuedMessages.length < MAX_QUEUED) {
           queuedMessages.push({
             from_id: msg.from_id,
-            from_name: "",  // No peer lookup for safety net — keep it lightweight
+            from_name: "",
             text: msg.text,
             type: msg.type || "text",
             message_id: msg.id,
             sent_at: msg.sent_at,
             pushedAt: Date.now(),
           });
-          newQueued++;
+          queued++;
         }
       }
 
-      // Ack all messages we just queued
-      const allIds = result.messages.filter(m => !pushedMessageIds.has(m.id) || newQueued > 0).map(m => m.id);
-      if (allIds.length > 0) {
-        try { await brokerFetch("/ack-messages", { id: myId, message_ids: allIds }); } catch {}
+      // Ack all processed messages
+      if (ackedIds.length > 0) {
+        try { await brokerFetch("/ack-messages", { id: myId, message_ids: ackedIds }); } catch {}
       }
 
-      if (newQueued > 0) {
-        log(`Safety net: queued ${newQueued} missed message(s) for piggyback delivery`);
+      if (pushed > 0 || queued > 0) {
+        log(`Safety net: ${pushed} channel push(es), ${queued} queued for piggyback`);
       }
     } catch {
       // Non-critical — broker may be temporarily unavailable
