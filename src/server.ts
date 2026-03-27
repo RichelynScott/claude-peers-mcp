@@ -546,7 +546,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       };
       if (!myId) {
         return {
-          content: [{ type: "text" as const, text: "Not registered with broker yet" }],
+          content: [{ type: "text" as const, text: "Not registered with broker yet. Try /mcp reconnect, or check if broker is running: bun src/cli.ts status" }],
           isError: true,
         };
       }
@@ -624,7 +624,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       const { summary } = args as { summary: string };
       if (!myId) {
         return {
-          content: [{ type: "text" as const, text: "Not registered with broker yet" }],
+          content: [{ type: "text" as const, text: "Not registered with broker yet. Try /mcp reconnect, or check if broker is running: bun src/cli.ts status" }],
           isError: true,
         };
       }
@@ -650,7 +650,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       const { name: sessionName } = args as { name: string };
       if (!myId) {
         return {
-          content: [{ type: "text" as const, text: "Not registered with broker yet" }],
+          content: [{ type: "text" as const, text: "Not registered with broker yet. Try /mcp reconnect, or check if broker is running: bun src/cli.ts status" }],
           isError: true,
         };
       }
@@ -689,7 +689,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     case "check_messages": {
       if (!myId) {
         return {
-          content: [{ type: "text" as const, text: "Not registered with broker yet" }],
+          content: [{ type: "text" as const, text: "Not registered with broker yet. Try /mcp reconnect, or check if broker is running: bun src/cli.ts status" }],
           isError: true,
         };
       }
@@ -751,7 +751,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       const { message, scope } = args as { message: string; scope: "machine" | "directory" | "repo" | "lan" };
       if (!myId) {
         return {
-          content: [{ type: "text" as const, text: "Not registered with broker yet" }],
+          content: [{ type: "text" as const, text: "Not registered with broker yet. Try /mcp reconnect, or check if broker is running: bun src/cli.ts status" }],
           isError: true,
         };
       }
@@ -809,7 +809,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     case "message_status": {
       const { message_id } = args as { message_id: number };
       if (!myId) {
-        return { content: [{ type: "text" as const, text: "Not registered with broker yet" }], isError: true };
+        return { content: [{ type: "text" as const, text: "Not registered with broker yet. Try /mcp reconnect, or check if broker is running: bun src/cli.ts status" }], isError: true };
       }
       try {
         const status = await brokerFetch<{ id: number; from_id: string; to_id: string; delivered: boolean; sent_at: string; error?: string }>("/message-status", { message_id });

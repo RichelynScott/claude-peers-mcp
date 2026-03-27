@@ -163,7 +163,7 @@ function handleListPeers(ctx: BrokerContext, body: ListPeersRequest): Peer[] {
 function handleSendMessage(ctx: BrokerContext, body: SendMessageRequest): { ok: boolean; error?: string; message_id?: number } {
   const type: MessageType = (body.type ?? "text") as MessageType;
   if (!VALID_MESSAGE_TYPES.has(type)) {
-    return { ok: false, error: `Invalid message type: ${body.type}` };
+    return { ok: false, error: `Invalid message type: "${body.type}". Valid types: text, query, response, handoff, broadcast` };
   }
 
   let metadataStr: string | null = null;
@@ -188,7 +188,7 @@ function handleSendMessage(ctx: BrokerContext, body: SendMessageRequest): { ok: 
 
   const target = ctx.db.query("SELECT id, pid FROM peers WHERE id = ?").get(body.to_id) as { id: string; pid: number } | null;
   if (!target) {
-    return { ok: false, error: `Peer ${body.to_id} not found` };
+    return { ok: false, error: `Peer ${body.to_id} not found. Run list_peers to see available peers, or the peer may have disconnected.` };
   }
 
   try {
@@ -210,7 +210,7 @@ async function handleFederationSendToRemote(ctx: BrokerContext, body: {
   type?: string; metadata?: Record<string, unknown>; reply_to?: number;
 }): Promise<{ ok: boolean; error?: string }> {
   if (!ctx.federationEnabled) {
-    return { ok: false, error: "Federation is not enabled" };
+    return { ok: false, error: "Federation is not enabled. Enable with: CLAUDE_PEERS_FEDERATION_ENABLED=true or run `bun src/cli.ts federation init`" };
   }
 
   const { to_id, from_id, text, type, metadata, reply_to } = body;
@@ -390,7 +390,7 @@ export function handleFederationConnect(ctx: BrokerContext, body: FederationConn
 
 async function _handleFederationConnect(ctx: BrokerContext, body: FederationConnectRequest): Promise<{ ok: boolean; hostname?: string; error?: string }> {
   if (!ctx.federationEnabled) {
-    return { ok: false, error: "Federation is not enabled" };
+    return { ok: false, error: "Federation is not enabled. Enable with: CLAUDE_PEERS_FEDERATION_ENABLED=true or run `bun src/cli.ts federation init`" };
   }
 
   const { host, port } = body;
@@ -465,7 +465,7 @@ async function _handleFederationConnect(ctx: BrokerContext, body: FederationConn
 
 function handleFederationDisconnect(ctx: BrokerContext, body: { host: string; port: number }): { ok: boolean; error?: string } {
   if (!ctx.federationEnabled) {
-    return { ok: false, error: "Federation is not enabled" };
+    return { ok: false, error: "Federation is not enabled. Enable with: CLAUDE_PEERS_FEDERATION_ENABLED=true or run `bun src/cli.ts federation init`" };
   }
 
   const key = `${body.host}:${body.port}`;
@@ -624,7 +624,7 @@ export function createFederationFetch(ctx: BrokerContext): (req: Request, server
 
     if (!ipInSubnet(cleanIp, ctx.federationSubnet.current)) {
       federationLog(`Rejected connection from ${cleanIp} — outside subnet ${ctx.federationSubnet.current}`);
-      return Response.json({ error: "Connection rejected: outside allowed subnet" }, { status: 403 });
+      return Response.json({ error: `Connection rejected: ${cleanIp} is outside allowed subnet ${ctx.federationSubnet.current}. Update CLAUDE_PEERS_FEDERATION_SUBNET or config file.` }, { status: 403 });
     }
 
     if (path === "/health") {
@@ -638,7 +638,7 @@ export function createFederationFetch(ctx: BrokerContext): (req: Request, server
     const psk = req.headers.get("x-claude-peers-psk");
     if (!psk || !ctx.isValidToken(psk, ctx.token.current)) {
       federationLog(`PSK mismatch from ${cleanIp}`);
-      return Response.json({ error: "PSK mismatch" }, { status: 403 });
+      return Response.json({ error: "PSK mismatch — ensure both machines share the same ~/.claude-peers-token file" }, { status: 403 });
     }
 
     try {
@@ -648,7 +648,7 @@ export function createFederationFetch(ctx: BrokerContext): (req: Request, server
         case "/federation/handshake": {
           const hsReq = body as FederationHandshakeRequest;
           if (!hsReq.psk || !ctx.isValidToken(hsReq.psk, ctx.token.current)) {
-            return Response.json({ error: "PSK mismatch" }, { status: 403 });
+            return Response.json({ error: "PSK mismatch — ensure both machines share the same ~/.claude-peers-token file" }, { status: 403 });
           }
           federationLog(`Handshake from ${hsReq.hostname} (v${hsReq.version}) at ${cleanIp}`);
           return Response.json({ hostname: ctx.federationHostname.current, version: "1.0.0" });

@@ -15,11 +15,11 @@ export const TOKEN_PATH =
  */
 export function readTokenSync(): string {
   if (!fs.existsSync(TOKEN_PATH)) {
-    throw new Error(`Token file not found at ${TOKEN_PATH}`);
+    throw new Error(`Token file not found at ${TOKEN_PATH}. Start the broker first (it auto-generates the token), or run: bun src/cli.ts rotate-token`);
   }
   const content = fs.readFileSync(TOKEN_PATH, "utf-8").trim();
   if (!content) {
-    throw new Error(`Token file is empty at ${TOKEN_PATH}`);
+    throw new Error(`Token file is empty at ${TOKEN_PATH}. Regenerate with: bun src/cli.ts rotate-token`);
   }
   return content;
 }
