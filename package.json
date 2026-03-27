@@ -27,6 +27,16 @@
   },
   "module": "src/index.ts",
   "type": "module",
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "GETTING_STARTED.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "docs/"
+  ],
   "engines": {
     "bun": ">=1.1.0"
   },
