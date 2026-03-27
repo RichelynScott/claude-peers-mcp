@@ -977,7 +977,68 @@ async function pollAndPushMessages() {
     }
   } catch (e) {
     // Broker might be down temporarily, don't crash
-    log(`Poll error: ${e instanceof Error ? e.message : String(e)}`);
+    consecutivePollFailures++;
+    if (consecutivePollFailures === 1 || consecutivePollFailures % 10 === 0) {
+      log(`Poll error (${consecutivePollFailures}x): ${e instanceof Error ? e.message : String(e)}`);
+    }
+    if (consecutivePollFailures >= MAX_POLL_FAILURES_BEFORE_RECONNECT) {
+      attemptBrokerReconnect().catch(() => {});
+    }
+    return; // Skip the success reset below
+  }
+  // Reset failure counter on successful poll
+  if (consecutivePollFailures > 0) {
+    log(`Poll recovered after ${consecutivePollFailures} consecutive failure(s)`);
+    consecutivePollFailures = 0;
+  }
+}
+
+// --- Broker auto-reconnect ---
+// If the broker goes down and comes back (e.g., kill-broker + auto-restart),
+// our peer ID is stale. Track consecutive poll failures and re-register.
+let consecutivePollFailures = 0;
+const MAX_POLL_FAILURES_BEFORE_RECONNECT = 5; // ~5 seconds at 1s poll interval
+
+async function attemptBrokerReconnect() {
+  if (!myId) return;
+  log("Broker reconnect: attempting re-registration...");
+  try {
+    // Check if broker is alive
+    const alive = await isBrokerAlive();
+    if (!alive) {
+      log("Broker reconnect: broker still unreachable, will retry next cycle");
+      return;
+    }
+
+    const tty = getTty();
+    const registerBody = {
+      pid: process.pid,
+      cwd: myCwd,
+      git_root: myGitRoot,
+      tty,
+      summary: "",
+      session_name: mySessionName || undefined,
+    };
+
+    const reg = await brokerFetch<{ id: PeerId }>("/register", registerBody);
+    myId = reg.id;
+    consecutivePollFailures = 0;
+    log(`Broker reconnect: re-registered as peer ${myId}`);
+
+    // Re-apply summary
+    try {
+      const branch = await getGitBranch(myCwd);
+      const recentFiles = await getRecentFiles(myCwd);
+      const summary = await generateSummary({
+        cwd: myCwd, git_root: myGitRoot, git_branch: branch,
+        recent_files: recentFiles, session_name: mySessionName || null, tty,
+      });
+      if (summary) {
+        await brokerFetch("/set-summary", { id: myId, summary });
+      }
+    } catch { /* Non-critical */ }
+  } catch (e) {
+    log(`Broker reconnect failed: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
 
