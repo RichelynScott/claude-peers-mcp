@@ -103,6 +103,23 @@ bun src/cli.ts kill-broker
 | `message_status(message_id)` | Check delivery status of a previously sent message |
 | `channel_health()` | Diagnose messaging health: broker status, pending messages, dedup state |
 
+## Multi-Agent Communication Protocol
+
+For reliable multi-agent coordination, use this standing pattern:
+
+**Broadcast + File** (for anything important):
+1. Write details to a file (task spec, results, status) in a shared location (`CPM_INBOX/`, `/tmp/`, or project root)
+2. Send a broadcast pointing to the file: "Task spec at CPM_INBOX/TASK_FOO.md — read it"
+3. Receiver reads the file for full details
+
+**send_message** (for quick signals only):
+- ACKs, pings, short status updates (1-3 lines)
+- Wake-up signals when a session may be idle
+
+**Why**: Channel push is session-state-dependent (~50-70% delivery via Layer 1). Piggyback (Layer 2) catches the rest but requires tool calls. File-based payloads survive session restarts and are never lost. Broadcasts reach all peers reliably. The file is the payload; the broadcast is the interrupt.
+
+**E2E test results (2026-03-27)**: 39/39 delivery (100%) across 30 send_messages + 9 broadcasts between 4 CPM sessions. Channel push worked for some sessions (MGR: 10/10 via push), failed for others (W1, W2: 0/10 via push, 10/10 via piggyback).
+
 ## Running
 
 ```bash

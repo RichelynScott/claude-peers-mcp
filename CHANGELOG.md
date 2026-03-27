@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-03-27
+
+### Added
+- **Version tracking in peer registration** — MCP servers now report their CPM version to the broker on register. Visible in `list_peers` output as `Version: X.Y.Z`. Helps diagnose version mismatches across sessions. (`f570f72`)
+- **GETTING_STARTED.md** — step-by-step tutorial from zero to first message. Covers install, MCP registration, channel push setup, and first peer discovery. (`4c88540`)
+- **SECURITY.md** — threat model, authentication mechanisms, and audit results. (`6a85a9e`)
+- **GitHub Actions CI** — `bun test` runs on every push and PR to main. Issue/PR templates and CONTRIBUTING.md for public contributors. (`71d0d57`)
+
+### Fixed
+- **Logging reliability** — replaced `Bun.write` append with `appendFileSync` to prevent log corruption under concurrent writes. (`4e0c529`)
+- **Actionable error messages** — startup failures now probe broker health, report peer count, and suggest specific fixes instead of generic errors. (`e80841d`)
+- **Piggyback queue stale threshold** — increased from 2 minutes to 10 minutes. The previous threshold caused 100+ messages per session to be evicted prematurely, defeating the piggyback delivery layer. (`76444f4`)
+
 ## [0.6.0] - 2026-03-27 — Reliability Release
 
 ### Summary
