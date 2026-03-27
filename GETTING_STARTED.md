@@ -183,3 +183,23 @@ Claude will call `check_messages` to retrieve them.
 - **Structured messages**: Use message types (query, response, handoff) for semantic routing
 - **CLI tools**: `bun src/cli.ts status` for broker health, `bun src/cli.ts peers` for peer list
 - **Troubleshooting guide**: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
+
+## Updating
+
+**npm/bun package:**
+```bash
+bun update -g claude-peers
+```
+
+**From source:**
+```bash
+cd claude-peers-mcp
+git pull origin main && bun install
+```
+
+After updating, restart the broker so it loads the new code:
+```bash
+bun src/cli.ts kill-broker
+```
+
+Sessions auto-reconnect to the new broker within ~5 seconds — no manual `/mcp` needed.

@@ -39,6 +39,24 @@ bun install
 
 After installing via npm, the CLI is available as `bunx claude-peers`.
 
+### Updating
+
+**npm/bun package:**
+```bash
+bun update -g claude-peers
+```
+
+**From source:**
+```bash
+git pull origin main && bun install
+```
+
+After updating, restart the broker so it loads the new code:
+```bash
+bun src/cli.ts kill-broker
+```
+Sessions auto-reconnect to the new broker within ~5 seconds.
+
 ### 2. Register the MCP server
 
 Register as a user-scoped MCP so it loads in every Claude Code session:
