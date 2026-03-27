@@ -236,6 +236,22 @@ let channelPushVerified = false;
 const pushedMessageIds = new Set<number>();
 const MAX_PUSHED_IDS = 1000;
 
+// --- Queued messages for piggyback delivery ---
+// When channel push is unreliable, messages are queued here and surfaced
+// on the next tool call as a banner prepended to the tool response.
+interface QueuedMessage {
+  from_id: string;
+  from_name: string;
+  text: string;
+  type: string;
+  message_id: number;
+  sent_at: string;
+  pushedAt: number; // Date.now() when notification was sent
+}
+const queuedMessages: QueuedMessage[] = [];
+const MAX_QUEUED = 50;
+const PIGGYBACK_GRACE_MS = 5_000; // wait 5s before surfacing via piggyback (give notification time)
+
 function rememberPushedId(id: number) {
   pushedMessageIds.add(id);
   if (pushedMessageIds.size > MAX_PUSHED_IDS) {
@@ -429,7 +445,36 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     brokerFetch("/set-channel-push", { id: myId, status: "working" }).catch(() => {});
   }
 
-  switch (name) {
+  // --- Piggyback delivery: surface queued messages on tool calls ---
+  // Messages are queued after every channel push. After a 5s grace period
+  // (giving the notification time to render), unsurfaced messages are
+  // prepended as a banner on the next tool call. This is the reliable
+  // second delivery layer when channel push silently drops notifications.
+  function wrapResult(result: { content: Array<{ type: string; text: string }>; isError?: boolean }) {
+    const now = Date.now();
+    // Only surface messages past the grace period (notification had time to display)
+    const ready = queuedMessages.filter(m => now - m.pushedAt >= PIGGYBACK_GRACE_MS);
+    if (ready.length > 0) {
+      // Remove surfaced messages from queue
+      for (const m of ready) {
+        const idx = queuedMessages.indexOf(m);
+        if (idx !== -1) queuedMessages.splice(idx, 1);
+      }
+      const lines = ready.map((m) => {
+        const label = m.from_name || m.from_id;
+        const typeTag = m.type && m.type !== "text" ? `[${m.type.toUpperCase()}] ` : "";
+        return `${typeTag}From ${label} (msg#${m.message_id}): ${m.text.slice(0, 200)}${m.text.length > 200 ? "..." : ""}`;
+      });
+      const banner = `--- QUEUED PEER MESSAGES (${ready.length}) ---\n${lines.join("\n---\n")}\n--- END QUEUED MESSAGES ---`;
+      log(`Piggybacked ${ready.length} queued message(s) onto ${name} tool call`);
+      if (result.content.length > 0 && result.content[0].type === "text") {
+        result.content[0].text = banner + "\n\n" + result.content[0].text;
+      }
+    }
+    return result;
+  }
+
+  const toolResult = await (async () => { switch (name) {
     case "list_peers": {
       const scope = (args as { scope: string }).scope as "machine" | "directory" | "repo" | "lan";
       try {
@@ -802,7 +847,11 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
       // Channel push state
       report.push("");
       report.push(`Pushed message IDs tracked (dedup): ${pushedMessageIds.size}`);
-
+      report.push(`Piggyback queue: ${queuedMessages.length} message(s) awaiting tool call delivery`);
+      if (queuedMessages.length > 0) {
+        const oldest = Math.min(...queuedMessages.map(m => m.pushedAt));
+        report.push(`  Oldest queued: ${Math.round((Date.now() - oldest) / 1000)}s ago`);
+      }
 
       return {
         content: [{ type: "text" as const, text: report.join("\n") }],
@@ -812,6 +861,8 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
+  })();
+  return wrapResult(toolResult as { content: Array<{ type: string; text: string }>; isError?: boolean });
 });
 
 // --- Polling loop for inbound messages ---
@@ -878,6 +929,22 @@ async function pollAndPushMessages() {
       // Mark as pushed (dedup) and queue for immediate ack
       rememberPushedId(msg.id);
       ackedIds.push(msg.id);
+
+      // Also queue for piggyback delivery — channel push may silently fail.
+      // The queue drains on the next tool call after a 5s grace period.
+      // If channel push worked, the model already saw it via notification.
+      // If it failed, piggyback is the reliable backup delivery.
+      if (queuedMessages.length < MAX_QUEUED) {
+        queuedMessages.push({
+          from_id: msg.from_id,
+          from_name: fromName,
+          text: msg.text,
+          type: msg.type || "text",
+          message_id: msg.id,
+          sent_at: msg.sent_at,
+          pushedAt: Date.now(),
+        });
+      }
 
       // Full message log for observability (stderr + file)
       const senderLabel = fromName || msg.from_id;
@@ -1156,7 +1223,24 @@ async function main() {
   // 7. Start polling for inbound messages
   const pollTimer = setInterval(pollAndPushMessages, POLL_INTERVAL_MS);
 
-  // 7. Start heartbeat
+  // 7b. Periodic queue cleanup — evict stale queued messages older than 2 min
+  // (if no tool call happened in 2 min, the messages would never be surfaced)
+  const queueCleanupTimer = setInterval(() => {
+    const now = Date.now();
+    const staleThreshold = 120_000; // 2 minutes
+    let cleaned = 0;
+    for (let i = queuedMessages.length - 1; i >= 0; i--) {
+      if (now - queuedMessages[i].pushedAt > staleThreshold) {
+        queuedMessages.splice(i, 1);
+        cleaned++;
+      }
+    }
+    if (cleaned > 0) {
+      log(`Queue cleanup: evicted ${cleaned} stale queued message(s) older than 2min`);
+    }
+  }, 30_000);
+
+  // 8. Start heartbeat
   const heartbeatTimer = setInterval(async () => {
     if (myId) {
       try {
