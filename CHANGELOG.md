@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-03-27 — Reliability Release
+
+### Summary
+Three-layer message delivery that mitigates Claude Code's ~30-50% silent notification drop rate. Messages now have three independent chances to reach the model: instant channel push, piggyback on the next tool call, and periodic safety-net polling. Also adds automatic broker reconnection — no more manual `/mcp` after broker restarts.
+
+### Added
+- **Three-layer message delivery** — messages now have three independent paths to reach the Claude model, each compensating for the previous layer's failure mode: (`d5d1c9d`)
+  1. **Layer 1 — Channel push** (instant): `mcp.notification()` pushes messages into the session immediately. Works ~50-70% of the time due to Claude Code platform limitations.
+  2. **Layer 2 — Piggyback on tool call** (reliable): Messages that channel push may have missed are queued locally and prepended as a banner to the next tool call response. 5-second grace period avoids duplicating messages that channel push already delivered.
+  3. **Layer 3 — Safety-net polling** (periodic): Every 30 seconds, polls the broker for any undelivered messages that slipped through both previous layers. Queues them for piggyback delivery instead of re-attempting channel push. (`ccd4e6e`)
+- **Auto-reconnect to broker on disconnect** — after 5 consecutive poll failures (~5 seconds), server.ts automatically re-registers with the broker. Handles broker restarts transparently without requiring manual `/mcp` reconnect. Session name and summary are restored after reconnect. Poll failure logging throttled to avoid log spam. (`f8d165b`)
+
+### Fixed
+- **Silent message loss** — the primary reliability problem since v0.1.0. Previously, if `mcp.notification()` succeeded at the stdio level but Claude Code dropped the notification internally, the message was lost forever. Now, piggyback delivery and safety-net polling provide two independent recovery paths.
+
 ## [0.5.1] - 2026-03-26
 
 ### Changed

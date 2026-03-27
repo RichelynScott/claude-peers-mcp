@@ -88,16 +88,28 @@ Then **fully restart** each Claude Code session (`/exit` + reopen, not just `/mc
 - Model-dependent behavior — different Claude models (Sonnet, Opus, Haiku) may handle channel notifications differently
 - Schema validation inside Claude Code may silently reject certain notification payloads
 
-**Mitigations in v0.4.1**:
-- **Simplified delivery**: Messages push once and ack immediately. Dedup via permanent `pushedMessageIds` Set prevents double delivery.
-- **`check_messages` fallback**: Polls broker for any undelivered messages. Use this when channel notifications aren't appearing — it's the reliable fallback.
+**Mitigations in v0.6.0 — Three-layer delivery**:
+
+As of v0.6.0, claude-peers uses three independent delivery layers to compensate for Claude Code's unreliable channel push:
+
+| Layer | Mechanism | Latency | How it helps |
+|-------|-----------|---------|--------------|
+| **1. Channel push** | `mcp.notification()` pushes directly into session | Instant | Works ~50-70% of the time |
+| **2. Piggyback** | Missed messages queued locally, prepended to next tool call response | Next tool call (seconds) | Catches what Layer 1 drops. 5s grace period avoids duplicates. |
+| **3. Safety-net poll** | Polls broker every 30s for undelivered messages | Up to 30s | Final safety net for anything that slipped through both layers |
+
+In practice, most messages arrive instantly via Layer 1. When they don't, Layer 2 catches them within seconds on the next tool call. Layer 3 is the rare-case fallback.
+
+**Additional mitigations**:
+- **Auto-reconnect**: If the broker restarts, MCP servers detect failed polls and re-register automatically after ~5 seconds. Session name and summary are restored. No manual `/mcp` needed.
 - **`channel_health` tool**: Diagnoses broker status, pending messages, and dedup state.
 - **Dead peer bounce**: Broker bounces undelivered messages back to senders when target peer dies.
+- **`check_messages` manual fallback**: Call explicitly to force-poll the broker for any messages all three layers missed.
 
 **What does NOT work**:
 - Relying on `mcp.notification()` success as proof of delivery (it only proves bytes hit stdout)
 
-**If you're experiencing this**, call `check_messages` periodically as a fallback — it will surface messages that channel push missed.
+**If messages still aren't appearing**: All three layers may fail if the MCP server itself is down or the session is disconnected. Use `bun src/cli.ts status` to verify the recipient's MCP server is registered and healthy.
 
 ### Stale MCP Server Processes
 
@@ -144,7 +156,7 @@ If a project-level `.mcp.json` defines claude-peers, it **overrides** the global
 2. Reconnect MCP in EVERY active session: run `/mcp` in each Claude Code instance
 3. The broker auto-restarts when the first session reconnects
 
-**How it works now (v0.4.1)**: Messages are pushed once via channel notification and acked immediately. A permanent dedup Set ensures no message is pushed twice. If channel push fails silently (Claude Code drops the notification), `check_messages` is the reliable fallback.
+**How it works now (v0.6.0)**: Messages use three-layer delivery: channel push (instant), piggyback on next tool call (reliable), and safety-net polling every 30s (fallback). Even if channel push fails silently, messages surface within seconds via piggyback.
 
 ### "Peer X is not running (PID Y dead)"
 
@@ -318,9 +330,9 @@ Claude Code Session A          Claude Code Session B
 ```
 
 - **Broker**: Singleton. One per machine. Auto-launched by MCP server if not running.
-- **MCP Server**: One per Claude Code session. Stdio transport. Registers on startup, polls every 1s.
+- **MCP Server**: One per Claude Code session. Stdio transport. Registers on startup, polls every 1s. Auto-reconnects after broker restart.
 - **Messages**: Stored in SQLite. Two-phase delivery: poll (fetch) then ack (confirm receipt).
-- **Channel Push**: MCP server pushes messages via `notifications/claude/channel` for immediate delivery.
+- **Delivery**: Three-layer system — channel push (instant) → piggyback on tool call (reliable) → safety-net poll every 30s (fallback).
 
 ## Key Files
 

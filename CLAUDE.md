@@ -155,7 +155,7 @@ bun test tests/cli.test.ts         # CLI + auto-summary (17)
 | `CLAUDE.md` | This file — project instructions |
 | `src/broker.ts` | Broker state, db, timers, server lifecycle, SIGHUP hot-reload (524 lines) |
 | `src/broker-handlers.ts` | Request handler factories — `createBrokerFetch(ctx)` + `createFederationFetch(ctx)` (720 lines) |
-| `src/server.ts` | MCP server + simple push-ack + channel push + session name persistence |
+| `src/server.ts` | MCP server + three-layer delivery (push/piggyback/safety-net) + auto-reconnect + session name persistence |
 | `src/cli.ts` | CLI: init, join, token, doctor, refresh-wsl2, connect, status |
 | `src/mdns.ts` | mDNS auto-discovery via bonjour-service |
 | `src/federation.ts` | TLS cert gen, HMAC, subnet, curl fetch, WSL2 detection |
@@ -166,8 +166,8 @@ bun test tests/cli.test.ts         # CLI + auto-summary (17)
 ## Known Issues
 
 - **Bun 1.3.x fetch() + self-signed TLS**: `tls: { rejectUnauthorized: false }` doesn't work. Federation uses `curl -sk` subprocess workaround via `federationFetch()`.
-- **Channel notifications silently dropped by Claude Code**: `mcp.notification()` succeeds but Claude Code may not render the notification (~30-50% of the time). This is a Claude Code platform limitation — `mcp.notification()` is fire-and-forget per JSON-RPC 2.0 spec. Mitigation: `check_messages` tool as reliable fallback. See `docs/TROUBLESHOOTING.md`.
-- **Channel notifications after /mcp reconnect**: `/mcp` reconnect restores tool access but may not re-establish channel subscriptions. Full session restart required for channel push.
+- **Channel notifications silently dropped by Claude Code**: `mcp.notification()` succeeds but Claude Code may not render the notification (~30-50% of the time). This is a Claude Code platform limitation — `mcp.notification()` is fire-and-forget per JSON-RPC 2.0 spec. **Mitigated in v0.6.0** with three-layer delivery: channel push (instant) → piggyback on next tool call (reliable) → safety-net polling every 30s (fallback). Most messages now arrive within seconds even when channel push fails. See `docs/TROUBLESHOOTING.md`.
+- **Channel notifications after /mcp reconnect**: `/mcp` reconnect restores tool access but may not re-establish channel subscriptions. Full session restart required for channel push. Piggyback and safety-net layers still work regardless.
 - **WSL2 mDNS**: mDNS auto-discovery does not work on WSL2 NAT mode (multicast blocked by Hyper-V). Use `federation init` + `federation join` instead. Mirrored mode may work but is unreliable.
 - **Channel push verification is heuristic**: `channel_push: "working"` means a tool call occurred within 10s of startup — it proves session activity, not notification delivery. Treat as best-effort signal.
 
