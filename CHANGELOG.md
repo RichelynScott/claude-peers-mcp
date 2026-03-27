@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-03-27 — npm Publish Ready
+
+### Added
+- **npm publish prep** — `files` field in package.json specifying published contents (src/, README, LICENSE, CHANGELOG, GETTING_STARTED, SECURITY, CONTRIBUTING, docs/). Package is ready for `npm publish` / `bun publish`. (`d34454a`)
+
 ## [0.6.2] - 2026-03-27
 
 ### Fixed

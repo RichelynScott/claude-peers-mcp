@@ -271,7 +271,7 @@ function rememberPushedId(id: number) {
 // --- MCP Server ---
 
 const mcp = new Server(
-  { name: "claude-peers", version: "0.6.2" },
+  { name: "claude-peers", version: "0.7.0" },
   {
     capabilities: {
       experimental: { "claude/channel": {} },
