@@ -2,7 +2,7 @@
 // Phase A: Manual federation (connect by IP, PSK auth, TLS)
 
 import { $ } from "bun";
-import { existsSync, chmodSync } from "node:fs";
+import { existsSync, chmodSync, appendFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
@@ -16,7 +16,7 @@ export function federationLog(msg: string): void {
   try {
     const logDir = `${process.cwd()}/cpm-logs`;
     const logPath = `${logDir}/federation.log`;
-    Bun.write(Bun.file(logPath), line + "\n", { append: true });
+    appendFileSync(logPath, line + "\n");
   } catch {}
 }
 

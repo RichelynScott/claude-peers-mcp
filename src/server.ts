@@ -191,7 +191,7 @@ function log(msg: string) {
   // MCP stdio servers must only use stderr for logging (stdout is the MCP protocol)
   const line = `[${new Date().toISOString()}] [CPM-server] ${msg}`;
   console.error(`[CPM-server] ${msg}`);
-  try { Bun.write(Bun.file(SERVER_LOG_PATH), line + "\n", { append: true }); } catch {}
+  try { require("fs").appendFileSync(SERVER_LOG_PATH, line + "\n"); } catch {}
 }
 
 async function getGitRoot(cwd: string): Promise<string | null> {
@@ -606,7 +606,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         try {
           const logPath = MSG_LOG_PATH;
           const entry = `\n${"=".repeat(60)}\n[${timestamp}] SENT to ${to_id} (${msgIdTag}):\n${message}\n`;
-          await Bun.write(Bun.file(logPath), entry, { append: true });
+          require("fs").appendFileSync(logPath, entry);
         } catch {
           // Non-critical
         }
@@ -794,7 +794,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
         log(`--- BROADCAST SENT ---\n[${timestamp}] To ${result.recipients} peer(s) in scope '${scope}':\n${message}\n--- END BROADCAST ---`);
         try {
           const entry = `\n${"=".repeat(60)}\n[${timestamp}] BROADCAST to ${result.recipients} peer(s) in scope '${scope}':\n${message}\n`;
-          await Bun.write(Bun.file(MSG_LOG_PATH), entry, { append: true });
+          require("fs").appendFileSync(MSG_LOG_PATH, entry);
         } catch {
           // Non-critical
         }
@@ -969,7 +969,7 @@ async function pollAndPushMessages() {
       try {
         const logPath = `${process.env.HOME}/.claude-peers-messages.log`;
         const entry = `\n${"=".repeat(60)}\n${logEntry}\n`;
-        await Bun.write(Bun.file(logPath), entry, { append: true });
+        require("fs").appendFileSync(logPath, entry);
       } catch {
         // Non-critical — file logging is best-effort
       }

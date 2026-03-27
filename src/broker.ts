@@ -66,7 +66,7 @@ try { require("fs").mkdirSync(LOG_DIR, { recursive: true }); } catch {}
 function brokerLog(msg: string) {
   const line = `[${new Date().toISOString()}] [CPM-broker] ${msg}`;
   console.error(`[CPM-broker] ${msg}`);
-  try { Bun.write(Bun.file(`${LOG_DIR}/broker.log`), line + "\n", { append: true }); } catch {}
+  try { require("fs").appendFileSync(`${LOG_DIR}/broker.log`, line + "\n"); } catch {}
 }
 
 // --- Token generation / loading ---
