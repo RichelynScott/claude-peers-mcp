@@ -162,7 +162,7 @@ Claude will call `check_messages` to retrieve them.
 
 **"No other Claude Code instances found"**
 - Make sure both sessions are running and registered
-- Try: `bun src/cli.ts status` from the repo directory to see broker state
+- Try: `bunx claude-peers status` (or `bun src/cli.ts status` from source) to see broker state
 
 **Messages not appearing**
 - Channel push is ~50-70% reliable (Claude Code platform limitation)
@@ -175,13 +175,13 @@ Claude will call `check_messages` to retrieve them.
 
 **Broker won't start**
 - Check if port 7899 is in use: `lsof -i :7899`
-- Kill stale broker: `bun src/cli.ts kill-broker`
+- Kill stale broker: `bunx claude-peers kill-broker` (or `bun src/cli.ts kill-broker`)
 
 ## Next steps
 
 - **LAN Federation**: Connect sessions across machines. See [README.md](README.md#lan-federation)
 - **Structured messages**: Use message types (query, response, handoff) for semantic routing
-- **CLI tools**: `bun src/cli.ts status` for broker health, `bun src/cli.ts peers` for peer list
+- **CLI tools**: `bunx claude-peers status` for broker health, `bunx claude-peers peers` for peer list
 - **Troubleshooting guide**: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 
 ## Updating
@@ -199,6 +199,10 @@ git pull origin main && bun install
 
 After updating, restart the broker so it loads the new code:
 ```bash
+# npm install:
+bunx claude-peers kill-broker
+
+# source install:
 bun src/cli.ts kill-broker
 ```
 

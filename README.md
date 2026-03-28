@@ -53,6 +53,10 @@ git pull origin main && bun install
 
 After updating, restart the broker so it loads the new code:
 ```bash
+# npm install:
+bunx claude-peers kill-broker
+
+# source install:
 bun src/cli.ts kill-broker
 ```
 Sessions auto-reconnect to the new broker within ~5 seconds.
@@ -128,19 +132,31 @@ Federation lets claude-peers instances on different machines discover and messag
 ### One-command setup (recommended)
 
 ```bash
-bun src/cli.ts federation init     # configures everything locally, outputs a join URL
+# npm install:
+bunx claude-peers federation init
+
+# source install:
+bun src/cli.ts federation init
 ```
 
 On the second machine, use the join URL:
 
 ```bash
+# npm install:
+bunx claude-peers federation join cpt://192.168.1.100:7900/dGhpcyBpcyBhIHRlc3Q
+
+# source install:
 bun src/cli.ts federation join cpt://192.168.1.100:7900/dGhpcyBpcyBhIHRlc3Q
 ```
 
 That's it. Federation auto-reconnects on broker restart. Use `federation doctor` to verify:
 
 ```bash
-bun src/cli.ts federation doctor   # checks every prerequisite, reports pass/fail
+# npm install:
+bunx claude-peers federation doctor
+
+# source install:
+bun src/cli.ts federation doctor
 ```
 
 ### mDNS auto-discovery
@@ -165,9 +181,9 @@ When federation is enabled, brokers advertise a `_claude-peers._tcp` service on 
 
 2. Copy `~/.claude-peers-token` to each machine (both must share the same token).
 
-3. Restart: `bun src/cli.ts restart`
+3. Restart: `bunx claude-peers restart` (or `bun src/cli.ts restart` from source)
 
-4. Connect: `bun src/cli.ts federation connect <remote-ip>:7900`
+4. Connect: `bunx claude-peers federation connect <remote-ip>:7900` (or `bun src/cli.ts federation connect <remote-ip>:7900`)
 
 Once connected, `list_peers(scope="lan")` returns peers from all federated machines, and `send_message` works across machines using the `hostname:peer_id` format. Connections persist to the config file and auto-reconnect on broker restart.
 
@@ -200,7 +216,7 @@ Messages carry a `type` field for semantic routing:
 
 ## CLI Commands
 
-Run from the project directory with `bun src/cli.ts <command>`:
+Run with `bunx claude-peers <command>` (npm install) or `bun src/cli.ts <command>` (source install):
 
 | Command | Description |
 |---------|-------------|
@@ -297,7 +313,7 @@ All local communication (server-to-broker, CLI-to-broker) uses bearer token auth
 | Layer | Mechanism |
 |-------|-----------|
 | **Local auth** | Bearer token (`~/.claude-peers-token`, auto-generated). All broker POST endpoints require it. |
-| **Hot reload** | Send `SIGHUP` (or `bun src/cli.ts reload-broker`) to reload token + config without restart. |
+| **Hot reload** | Send `SIGHUP` (or `bunx claude-peers reload-broker`) to reload token + config without restart. |
 | **Federation transport** | TLS with self-signed certificates (RSA-2048 for macOS LibreSSL compatibility). |
 | **Federation auth** | Pre-shared key (PSK) in `X-Claude-Peers-PSK` header. Both machines must share `~/.claude-peers-token`. |
 | **Message integrity** | HMAC-SHA256 signing on all federation relay requests. |
@@ -353,8 +369,9 @@ bun test tests/cli.test.ts         # CLI + auto-summary (17)
 Logs in `cpm-logs/` (gitignored): `messages.log`, `broker.log`, `server.log`, `federation.log`.
 
 ```bash
-tail -f cpm-logs/*.log        # Watch all logs
-bun src/cli.ts status          # Broker state from terminal
+tail -f cpm-logs/*.log             # Watch all logs
+bunx claude-peers status           # Broker state from terminal (npm)
+bun src/cli.ts status              # Broker state from terminal (source)
 ```
 
 See [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) for diagnostic steps and common issues.

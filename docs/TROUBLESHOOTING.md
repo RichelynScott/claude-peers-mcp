@@ -1,13 +1,21 @@
 # Troubleshooting — claude-peers-mcp
 
+## CLI Usage Note
+
+> **npm install**: Use `bunx claude-peers <command>` throughout this guide.
+> **Source install**: Use `bun src/cli.ts <command>` from the project directory.
+> Examples below show both forms where they first appear.
+
 ## Quick Diagnostics
 
 ```bash
 # Is the broker running?
-bun src/cli.ts status
+bunx claude-peers status           # npm
+bun src/cli.ts status              # source
 
 # Who's connected?
-bun src/cli.ts peers
+bunx claude-peers peers            # npm
+bun src/cli.ts peers               # source
 
 # Watch message traffic in real time
 tail -f cpm-logs/messages.log
@@ -63,7 +71,8 @@ sqlite3 ~/.claude-peers.db "SELECT id, delivered, sent_at FROM messages WHERE id
 
 **Quick fix**:
 ```bash
-bun src/cli.ts restart
+bunx claude-peers restart          # npm
+bun src/cli.ts restart             # source
 ```
 Then **fully restart** each Claude Code session (`/exit` + reopen, not just `/mcp`).
 
@@ -109,7 +118,7 @@ In practice, most messages arrive instantly via Layer 1. When they don't, Layer 
 **What does NOT work**:
 - Relying on `mcp.notification()` success as proof of delivery (it only proves bytes hit stdout)
 
-**If messages still aren't appearing**: All three layers may fail if the MCP server itself is down or the session is disconnected. Use `bun src/cli.ts status` to verify the recipient's MCP server is registered and healthy.
+**If messages still aren't appearing**: All three layers may fail if the MCP server itself is down or the session is disconnected. Use `bunx claude-peers status` (or `bun src/cli.ts status`) to verify the recipient's MCP server is registered and healthy.
 
 ### Stale MCP Server Processes
 
@@ -124,7 +133,7 @@ ps aux | grep "bun.*server.ts" | grep -v grep
 # If you see extras (especially from different paths), that's the problem
 ```
 
-**Prevention**: As of v0.3.0, server.ts uses parent death detection (PPID check) and TTY-based broker eviction to clean up stale processes. If you still hit this issue, use `bun src/cli.ts restart`.
+**Prevention**: As of v0.3.0, server.ts uses parent death detection (PPID check) and TTY-based broker eviction to clean up stale processes. If you still hit this issue, use `bunx claude-peers restart` (or `bun src/cli.ts restart`).
 
 ### MCP Server Fails to Connect After Path Change or Update
 
@@ -152,7 +161,7 @@ If a project-level `.mcp.json` defines claude-peers, it **overrides** the global
 **Cause**: The broker or recipient's MCP server is running old code. The two-phase delivery system (`/poll-messages` + `/ack-messages`) requires both broker AND MCP server to be on the same version.
 
 **Fix**:
-1. Kill the broker: `bun src/cli.ts kill-broker` (or `bun src/cli.ts restart` for a full reset)
+1. Kill the broker: `bunx claude-peers kill-broker` (or `bunx claude-peers restart` for a full reset)
 2. Reconnect MCP in EVERY active session: run `/mcp` in each Claude Code instance
 3. The broker auto-restarts when the first session reconnects
 
@@ -162,7 +171,7 @@ If a project-level `.mcp.json` defines claude-peers, it **overrides** the global
 
 **Cause**: The target peer's Claude Code process exited. The broker checks PID liveness before accepting messages.
 
-**Fix**: The target session needs to be restarted. If you believe the session IS running, the peer may have re-registered with a new ID after a broker restart. Run `bun src/cli.ts peers` to find the current ID.
+**Fix**: The target session needs to be restarted. If you believe the session IS running, the peer may have re-registered with a new ID after a broker restart. Run `bunx claude-peers peers` (or `bun src/cli.ts peers`) to find the current ID.
 
 ### Broker won't start / EADDRINUSE
 
@@ -231,29 +240,31 @@ curl -s -X POST http://127.0.0.1:7899/unregister \
 
 **One-command setup** (v0.4.0+):
 ```bash
-bun src/cli.ts federation init       # Configures everything, outputs a join URL
+bunx claude-peers federation init       # npm
+bun src/cli.ts federation init          # source
 ```
 
 **On the second machine**, use the join URL:
 ```bash
-bun src/cli.ts federation join cpt://192.168.1.100:7900/<token>
+bunx claude-peers federation join cpt://192.168.1.100:7900/<token>
 ```
 
 **Verify setup**:
 ```bash
-bun src/cli.ts federation doctor     # Checks every prerequisite, reports pass/fail
+bunx claude-peers federation doctor     # npm
+bun src/cli.ts federation doctor        # source
 ```
 
 **WSL2 port forwarding refresh** (after reboot):
 ```bash
-bun src/cli.ts federation refresh-wsl2
+bunx claude-peers federation refresh-wsl2
 ```
 
 Connections persist to `~/.claude-peers-config.json` and auto-reconnect on broker restart.
 
 ### Federation Connect Fails: "Connection rejected: outside allowed subnet"
 
-**Symptoms**: `bun src/cli.ts federation connect <ip>:7900` returns connection rejected or handshake failed.
+**Symptoms**: `bunx claude-peers federation connect <ip>:7900` (or `bun src/cli.ts federation connect <ip>:7900`) returns connection rejected or handshake failed.
 
 **Most likely cause on WSL2**: The auto-detected subnet is the WSL2 internal NAT range (172.x.x.x), not your actual LAN subnet.
 
@@ -275,17 +286,18 @@ Add this to your `~/.zshrc` and restart the broker.
 ```bash
 rm ~/.claude-peers-federation.crt ~/.claude-peers-federation.key
 # Restart the broker — it auto-generates a new RSA-2048 cert
-bun src/cli.ts kill-broker
+bunx claude-peers kill-broker       # npm
+bun src/cli.ts kill-broker          # source
 ```
 
 As of v0.3.0, new installations default to RSA-2048 for compatibility.
 
 ### Federation Connect Fails: "Handshake failed" or Connection Refused
 
-**Symptoms**: `bun src/cli.ts federation connect <ip>:7900` fails with handshake error or connection refused.
+**Symptoms**: `bunx claude-peers federation connect <ip>:7900` (or `bun src/cli.ts federation connect <ip>:7900`) fails with handshake error or connection refused.
 
 **Check on the REMOTE machine**:
-1. Is the broker running? `bun src/cli.ts status`
+1. Is the broker running? `bunx claude-peers status` (or `bun src/cli.ts status`)
 2. Is federation enabled? Check `tail cpm-logs/federation.log` for `Listening on 0.0.0.0:7900 (TLS)`
 3. If not: `CLAUDE_PEERS_FEDERATION_ENABLED=true bun src/broker.ts`
 4. macOS: Accept the firewall prompt for port 7900, or run:
@@ -304,7 +316,7 @@ Whenever you modify `src/broker.ts`, `src/server.ts`, or `src/shared/types.ts`:
 
 1. **Build check**: `bun build src/broker.ts --outfile /tmp/check.js` (and same for server.ts, cli.ts)
 2. **Run tests**: `bun test broker.test.ts`
-3. **Kill broker**: `bun src/cli.ts kill-broker` (or `bun src/cli.ts restart` for a full reset)
+3. **Kill broker**: `bunx claude-peers kill-broker` (or `bunx claude-peers restart` for a full reset)
 4. **Reconnect MCP** in every active session: `/mcp` in each Claude Code instance
 5. The broker auto-launches with new code when the first session's MCP server connects
 
@@ -338,7 +350,7 @@ Claude Code Session A          Claude Code Session B
 
 | File | What it does | When to restart after changes |
 |------|-------------|-------------------------------|
-| `src/broker.ts` | HTTP server + SQLite | Kill broker (`bun src/cli.ts kill-broker`) or `bun src/cli.ts restart` |
+| `src/broker.ts` | HTTP server + SQLite | Kill broker (`bunx claude-peers kill-broker`) or `bunx claude-peers restart` |
 | `src/server.ts` | MCP server + channel push | Reconnect MCP (`/mcp` in session) |
 | `src/shared/types.ts` | TypeScript interfaces | Both broker + MCP |
 | `src/cli.ts` | CLI utility | No restart needed |
