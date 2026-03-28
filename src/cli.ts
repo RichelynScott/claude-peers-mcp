@@ -1396,6 +1396,40 @@ if (Bun.main === import.meta.path) {
       break;
     }
 
+    case "metrics": {
+      try {
+        const detailed = process.argv[3] === "--detailed";
+        const metricsUrl = detailed ? "/metrics?detailed=true" : "/metrics";
+        const metrics = await brokerFetch<any>(metricsUrl);
+        console.log(`\n  Broker Metrics:\n`);
+        console.log(`    Uptime:              ${formatUptime(new Date(Date.now() - metrics.uptime_seconds * 1000).toISOString())}`);
+        console.log(`    Peers:               ${metrics.peer_count}`);
+        console.log(`    Requests/min:        ${metrics.requests_per_minute}`);
+        console.log(`\n  Messages:`);
+        console.log(`    Total:               ${metrics.messages.total}`);
+        console.log(`    Delivered:           ${metrics.messages.delivered}`);
+        console.log(`    Pending:             ${metrics.messages.pending}`);
+        console.log(`    Delivery rate:       ${metrics.messages.delivery_rate_pct}%`);
+        console.log(`\n  Federation:`);
+        console.log(`    Enabled:             ${metrics.federation.enabled}`);
+        console.log(`    Remote machines:     ${metrics.federation.remote_count}`);
+        console.log(`    Remote peers:        ${metrics.federation.remote_peer_count}`);
+        if (detailed && metrics.peers) {
+          console.log(`\n  Peers (detailed):`);
+          for (const p of metrics.peers) {
+            console.log(`    ${p.name} (${p.id})`);
+            console.log(`      cwd: ${p.cwd}`);
+            console.log(`      push: ${p.channel_push}  last_seen: ${p.last_seen}`);
+          }
+        }
+        console.log("");
+      } catch (e) {
+        console.error(`Failed to fetch metrics: ${e instanceof Error ? e.message : e}`);
+        process.exit(1);
+      }
+      break;
+    }
+
     case "messages": {
       const { Database } = await import("bun:sqlite");
       const DB_PATH = process.env.CLAUDE_PEERS_DB ?? `${process.env.HOME}/.claude-peers.db`;
