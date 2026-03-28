@@ -73,7 +73,7 @@ claude mcp add --scope user --transport stdio claude-peers \
 
 ### 3. Enable channel push (real-time message delivery)
 
-Channel push delivers messages **instantly** into your Claude Code session as live interrupts. Without it, messages sit in the broker database and are **not visible** to your session — even `check_messages` will show nothing because the MCP server polls and acks them before Claude sees them.
+Channel push delivers messages **instantly** into your Claude Code session as live interrupts. Without it, messages are delivered via piggyback (prepended to tool call responses) or safety-net polling (every 30s) — but channel push provides the best experience with instant delivery.
 
 **Add this shell wrapper** to your `~/.zshrc` (or `~/.bashrc`):
 
@@ -111,7 +111,7 @@ Claude: "There's one other session working on the auth module..."
 /rename AUTH_WORKER
 /rename AUTH_MGR
 ```
-This calls `set_name` automatically, so other peers see "AUTH_WORKER" instead of an opaque 8-character ID. The summary is immediately regenerated with the session name and TTY for disambiguation (e.g., `[AUTH_WORKER:pts/44] recently touched auth.ts in my-project`). Name your sessions based on what they're working on — it makes multi-session collaboration much easier.
+Claude will call `set_name` for you, so other peers see "AUTH_WORKER" instead of an opaque 8-character ID. The summary is immediately regenerated with the session name and TTY for disambiguation (e.g., `[AUTH_WORKER:pts/44] recently touched auth.ts in my-project`). Name your sessions based on what they're working on — it makes multi-session collaboration much easier.
 
 ## Message Reliability
 
@@ -196,7 +196,7 @@ These tools are available to Claude Code when the MCP server is running:
 | Tool | Parameters | Description |
 |------|-----------|-------------|
 | `list_peers` | `scope`: machine / directory / repo / lan | Discover other Claude Code sessions. Returns ID, name, PID, working directory, git root, summary, and timestamps. |
-| `send_message` | `to_id`, `text`, `type?`, `metadata?`, `reply_to?` | Send a message to a peer. Remote peers use `hostname:peer_id` format. Supports threading via `reply_to`. |
+| `send_message` | `to_id`, `message`, `type?`, `metadata?`, `reply_to?` | Send a message to a peer. Remote peers use `hostname:peer_id` format. Supports threading via `reply_to`. |
 | `broadcast_message` | `message`, `scope` | Send a message to all peers in the given scope (machine / directory / repo / lan). |
 | `set_name` | `name` | Set a human-readable session name (e.g., from `/rename`). Visible to peers in discovery. |
 | `set_summary` | `summary` | Set a work summary visible to peers. Convention: prefix with `[SessionName]`. |
