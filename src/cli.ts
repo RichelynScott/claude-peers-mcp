@@ -1396,6 +1396,77 @@ if (Bun.main === import.meta.path) {
       break;
     }
 
+    case "messages": {
+      const { Database } = await import("bun:sqlite");
+      const DB_PATH = process.env.CLAUDE_PEERS_DB ?? `${process.env.HOME}/.claude-peers.db`;
+
+      if (!fs.existsSync(DB_PATH)) {
+        console.error(`Database not found: ${DB_PATH}`);
+        process.exit(1);
+      }
+
+      const msgDb = new Database(DB_PATH, { readonly: true });
+
+      // Parse flags
+      const args = process.argv.slice(3);
+      let fromFilter = "";
+      let toFilter = "";
+      let sinceFilter = "";
+      let searchFilter = "";
+      let limit = 20;
+      let jsonOutput = false;
+
+      for (let i = 0; i < args.length; i++) {
+        switch (args[i]) {
+          case "--from": fromFilter = args[++i] || ""; break;
+          case "--to": toFilter = args[++i] || ""; break;
+          case "--since": sinceFilter = args[++i] || ""; break;
+          case "--search": searchFilter = args[++i] || ""; break;
+          case "--limit": limit = parseInt(args[++i]) || 20; break;
+          case "--json": jsonOutput = true; break;
+        }
+      }
+
+      // Build query
+      const conditions: string[] = [];
+      const params: string[] = [];
+
+      if (fromFilter) { conditions.push("from_id LIKE ?"); params.push(`%${fromFilter}%`); }
+      if (toFilter) { conditions.push("to_id LIKE ?"); params.push(`%${toFilter}%`); }
+      if (sinceFilter) { conditions.push("sent_at >= ?"); params.push(sinceFilter); }
+      if (searchFilter) { conditions.push("text LIKE ?"); params.push(`%${searchFilter}%`); }
+
+      const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+      const query = `SELECT id, from_id, to_id, text, type, sent_at, delivered FROM messages ${where} ORDER BY sent_at DESC LIMIT ?`;
+      params.push(String(limit));
+
+      const messages = msgDb.query(query).all(...params) as Array<{
+        id: number; from_id: string; to_id: string; text: string; type: string; sent_at: string; delivered: number;
+      }>;
+
+      if (jsonOutput) {
+        console.log(JSON.stringify(messages, null, 2));
+      } else {
+        if (messages.length === 0) {
+          console.log("No messages found.");
+        } else {
+          console.log(`\n  Messages (${messages.length} result${messages.length === 1 ? "" : "s"}):\n`);
+          for (const m of messages) {
+            const status = m.delivered ? "delivered" : "pending";
+            const time = m.sent_at.replace("T", " ").replace(/\.\d+Z$/, "");
+            console.log(`  #${m.id}  ${time}  [${m.type}] ${status}`);
+            console.log(`    From: ${m.from_id}  →  To: ${m.to_id}`);
+            const preview = m.text.length > 120 ? m.text.slice(0, 120) + "..." : m.text;
+            console.log(`    ${preview}`);
+            console.log("");
+          }
+        }
+      }
+
+      msgDb.close();
+      break;
+    }
+
     default:
       console.log(`claude-peers CLI
 
@@ -1410,6 +1481,8 @@ Usage:
   bun cli.ts restart                               Kill ALL claude-peers processes (broker + servers)
   bun cli.ts kill-broker                           Stop the broker daemon
   bun cli.ts reload-broker                         Hot-reload broker config (SIGHUP, no restart)
+  bun cli.ts messages [--from X] [--to X] [--json] Search message history
+  bun cli.ts metrics [--detailed]                  Show broker metrics
 
 Federation:
   bun cli.ts federation init                       One-command federation setup (config, certs, firewall)
