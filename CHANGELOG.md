@@ -6,10 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-03-28 -- Metrics, CLI Search, and Documentation
+
 ### Added
-- **Architecture documentation** (`docs/ARCHITECTURE.md`) -- Mermaid diagrams for component layout, three-layer message flow, federation topology, hot-reload architecture, database schema, and authentication model
-- **API reference** (`docs/API.md`) -- complete HTTP endpoint reference for all broker and federation endpoints with request/response schemas
-- **Federation guide** (`docs/FEDERATION.md`) -- standalone setup guide covering quick start, manual setup, WSL2/macOS specifics, troubleshooting, and security model
+- **Broker `/metrics` endpoint** -- New GET endpoint (no auth) returns uptime, peer count, message stats (total/delivered/pending/delivery rate), requests per minute, and federation status. Optional `?detailed=true` adds per-peer breakdown. ([`6207c7a`](https://github.com/RichelynScott/claude-peers-mcp/commit/6207c7a))
+- **CLI `messages` subcommand** -- Search and filter message history directly from SQLite. Flags: `--from`, `--to`, `--since`, `--search`, `--limit`, `--json`. Opens DB read-only, no broker dependency. ([`0502c18`](https://github.com/RichelynScott/claude-peers-mcp/commit/0502c18))
+- **CLI `metrics` subcommand** -- Human-readable broker metrics display with `--detailed` flag for per-peer info. ([`0502c18`](https://github.com/RichelynScott/claude-peers-mcp/commit/0502c18))
+- **Architecture documentation** (`docs/ARCHITECTURE.md`) -- Mermaid diagrams for component layout, three-layer message flow, federation topology, hot-reload architecture, database schema, and authentication model. ([`3a630b6`](https://github.com/RichelynScott/claude-peers-mcp/commit/3a630b6))
+- **API reference** (`docs/API.md`) -- Complete HTTP endpoint reference for all broker and federation endpoints with request/response schemas. ([`7808862`](https://github.com/RichelynScott/claude-peers-mcp/commit/7808862))
+- **Federation guide** (`docs/FEDERATION.md`) -- Standalone setup guide covering quick start, manual setup, WSL2/macOS specifics, troubleshooting, and security model. ([`b93a30d`](https://github.com/RichelynScott/claude-peers-mcp/commit/b93a30d))
+
+### Fixed
+- **README accuracy** -- Corrected `send_message` param name (`text` -> `message`), updated `check_messages` description for three-layer delivery, clarified `set_name` behavior after `/rename`. ([`8c2379f`](https://github.com/RichelynScott/claude-peers-mcp/commit/8c2379f))
+
+### Stats
+- Tests: 111 pass, 0 fail, 341 assertions (was 104/318 in v0.7.0)
 
 ## [0.7.0] - 2026-03-27 -- npm Publish Ready
 
