@@ -239,3 +239,30 @@ export interface BrokerContext {
   brokerLog: (msg: string) => void;
   isValidToken: (provided: string, expected: string) => boolean;
 }
+
+// --- Metrics Response ---
+
+export interface MetricsResponse {
+  uptime_seconds: number;
+  peer_count: number;
+  messages: {
+    total: number;
+    delivered: number;
+    pending: number;
+    delivery_rate_pct: number;
+  };
+  requests_per_minute: number;
+  federation: {
+    enabled: boolean;
+    remote_count: number;
+    remote_peer_count: number;
+  };
+  peers?: Array<{
+    id: string;
+    name: string;
+    cwd: string;
+    channel_push: string;
+    registered_at: string;
+    last_seen: string;
+  }>;
+}
