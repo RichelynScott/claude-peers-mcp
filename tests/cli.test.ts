@@ -345,3 +345,87 @@ describe("auto-summary integration", () => {
     expect(stdout.trim().length).toBeGreaterThan(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Messages subcommand (direct DB access, no broker needed)
+// ---------------------------------------------------------------------------
+
+describe("messages subcommand", () => {
+  const MSG_TEST_DB = "/tmp/claude-peers-messages-test.db";
+
+  beforeAll(() => {
+    // Create a test DB with the messages table schema
+    const { Database } = require("bun:sqlite");
+    const db = new Database(MSG_TEST_DB);
+    db.run(`CREATE TABLE IF NOT EXISTS messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      from_id TEXT NOT NULL,
+      to_id TEXT NOT NULL,
+      text TEXT NOT NULL,
+      type TEXT DEFAULT 'text',
+      metadata TEXT,
+      reply_to INTEGER,
+      sent_at TEXT NOT NULL,
+      delivered INTEGER DEFAULT 0
+    )`);
+    db.run(`INSERT INTO messages (from_id, to_id, text, type, sent_at, delivered) VALUES ('peer1', 'peer2', 'hello world', 'text', '2026-01-01T00:00:00.000Z', 1)`);
+    db.run(`INSERT INTO messages (from_id, to_id, text, type, sent_at, delivered) VALUES ('peer2', 'peer1', 'hi back', 'response', '2026-01-01T00:01:00.000Z', 0)`);
+    db.close();
+  });
+
+  afterAll(() => {
+    try { fs.unlinkSync(MSG_TEST_DB); } catch {}
+  });
+
+  test("messages command runs without error", () => {
+    const proc = Bun.spawnSync(["bun", CLI_PATH, "messages", "--limit", "5"], {
+      cwd: PROJECT_ROOT,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, CLAUDE_PEERS_DB: MSG_TEST_DB },
+    });
+    // Should not crash — either shows messages or "No messages found"
+    expect(proc.exitCode).toBe(0);
+  });
+
+  test("messages --json outputs valid JSON", () => {
+    const proc = Bun.spawnSync(["bun", CLI_PATH, "messages", "--json", "--limit", "5"], {
+      cwd: PROJECT_ROOT,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, CLAUDE_PEERS_DB: MSG_TEST_DB },
+    });
+    expect(proc.exitCode).toBe(0);
+    const output = new TextDecoder().decode(proc.stdout).trim();
+    const parsed = JSON.parse(output);
+    expect(Array.isArray(parsed)).toBe(true);
+  });
+
+  test("messages --from filters by sender", () => {
+    const proc = Bun.spawnSync(["bun", CLI_PATH, "messages", "--json", "--from", "peer1"], {
+      cwd: PROJECT_ROOT,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, CLAUDE_PEERS_DB: MSG_TEST_DB },
+    });
+    expect(proc.exitCode).toBe(0);
+    const output = new TextDecoder().decode(proc.stdout).trim();
+    const parsed = JSON.parse(output) as Array<{ from_id: string }>;
+    expect(parsed.length).toBe(1);
+    expect(parsed[0].from_id).toBe("peer1");
+  });
+
+  test("messages --search filters by text content", () => {
+    const proc = Bun.spawnSync(["bun", CLI_PATH, "messages", "--json", "--search", "hello"], {
+      cwd: PROJECT_ROOT,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: { ...process.env, CLAUDE_PEERS_DB: MSG_TEST_DB },
+    });
+    expect(proc.exitCode).toBe(0);
+    const output = new TextDecoder().decode(proc.stdout).trim();
+    const parsed = JSON.parse(output) as Array<{ text: string }>;
+    expect(parsed.length).toBe(1);
+    expect(parsed[0].text).toContain("hello");
+  });
+});
