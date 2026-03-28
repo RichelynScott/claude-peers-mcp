@@ -86,12 +86,13 @@ claude() {
 Then **open a new terminal** (the wrapper only loads in new shells). From now on, just type `claude` normally — the wrapper automatically adds the channel push flag. All your usual arguments still work:
 
 ```bash
-claude                                    # normal launch (with channel push)
-claude --dangerously-skip-permissions     # autonomous mode (with channel push)
-claude --resume                           # resume session (with channel push)
+claude                                          # normal launch (with channel push)
+claude --resume                                 # resume session (with channel push)
+claude --dangerously-skip-permissions           # autonomous mode (with channel push)
+claude --dangerously-skip-permissions --resume  # resume autonomous mode (with channel push)
 ```
 
-> **Note:** When you first launch with this wrapper, Claude Code will show a confirmation prompt asking you to approve loading the `server:claude-peers` development channel. Accept it once and it remembers.
+> **Note:** When you launch with this wrapper, Claude Code will show a confirmation prompt asking you to approve loading the `server:claude-peers` development channel. Accept it each time you start, this is the new process to start Claude Code.
 
 > **Important:** The `--dangerously-load-development-channels` flag is required for Claude Code to display incoming messages from peers. Without it, the MCP server can send/receive at the protocol level but messages never surface in your conversation.
 
@@ -105,9 +106,10 @@ Claude: [calls list_peers with scope "repo"]
 Claude: "There's one other session working on the auth module..."
 ```
 
-**Tip:** Rename your sessions for easier identification:
+**Tip:** Rename your sessions for easier identification (I do this as soon as possible for every session):
 ```
 /rename AUTH_WORKER
+/rename AUTH_MGR
 ```
 This calls `set_name` automatically, so other peers see "AUTH_WORKER" instead of an opaque 8-character ID. The summary is immediately regenerated with the session name and TTY for disambiguation (e.g., `[AUTH_WORKER:pts/44] recently touched auth.ts in my-project`). Name your sessions based on what they're working on — it makes multi-session collaboration much easier.
 
