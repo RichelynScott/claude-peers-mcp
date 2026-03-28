@@ -506,6 +506,45 @@ export function createBrokerFetch(ctx: BrokerContext): (req: Request) => Respons
       });
     }
 
+    if (path === "/metrics") {
+      const peers = ctx.stmts.selectAllPeers.all() as Peer[];
+      const totalMsgs = (ctx.db.query("SELECT COUNT(*) as cnt FROM messages").get() as { cnt: number }).cnt;
+      const deliveredMsgs = (ctx.db.query("SELECT COUNT(*) as cnt FROM messages WHERE delivered = 1").get() as { cnt: number }).cnt;
+      const pendingMsgs = (ctx.db.query("SELECT COUNT(*) as cnt FROM messages WHERE delivered = 0").get() as { cnt: number }).cnt;
+      const deliveryRate = totalMsgs > 0 ? Math.round((deliveredMsgs / totalMsgs) * 10000) / 100 : 100;
+
+      const metrics: Record<string, unknown> = {
+        uptime_seconds: Math.floor((Date.now() - ctx.startTime) / 1000),
+        peer_count: peers.length,
+        messages: {
+          total: totalMsgs,
+          delivered: deliveredMsgs,
+          pending: pendingMsgs,
+          delivery_rate_pct: deliveryRate,
+        },
+        requests_per_minute: ctx.counters.requestsLastMinute,
+        federation: {
+          enabled: ctx.federationEnabled,
+          remote_count: ctx.remoteMachines.size,
+          remote_peer_count: Array.from(ctx.remoteMachines.values()).reduce((sum, m) => sum + m.peers.length, 0),
+        },
+      };
+
+      // Optional detailed per-peer breakdown
+      if (url.searchParams.get("detailed") === "true") {
+        metrics.peers = peers.map(p => ({
+          id: p.id,
+          name: p.session_name || p.id,
+          cwd: p.cwd,
+          channel_push: p.channel_push,
+          registered_at: p.registered_at,
+          last_seen: p.last_seen,
+        }));
+      }
+
+      return Response.json(metrics);
+    }
+
     if (req.method === "POST") {
       const authHeader = req.headers.get("authorization");
       if (!authHeader || !authHeader.startsWith("Bearer ")) {

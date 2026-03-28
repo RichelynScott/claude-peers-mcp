@@ -1124,3 +1124,49 @@ describe("peer eviction on re-register", () => {
     expect(sendRes.status).toBeGreaterThanOrEqual(400);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Metrics endpoint
+// ---------------------------------------------------------------------------
+
+describe("metrics endpoint", () => {
+  test("returns metrics structure", async () => {
+    const res = await fetch(`${BASE}/metrics`);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.uptime_seconds).toBeGreaterThanOrEqual(0);
+    expect(data.peer_count).toBeGreaterThanOrEqual(0);
+    expect(data.messages).toBeDefined();
+    expect(data.messages.total).toBeGreaterThanOrEqual(0);
+    expect(data.messages.delivered).toBeGreaterThanOrEqual(0);
+    expect(data.messages.pending).toBeGreaterThanOrEqual(0);
+    expect(typeof data.messages.delivery_rate_pct).toBe("number");
+    expect(data.requests_per_minute).toBeGreaterThanOrEqual(0);
+    expect(data.federation).toBeDefined();
+    expect(typeof data.federation.enabled).toBe("boolean");
+  });
+
+  test("detailed mode includes peer list", async () => {
+    const res = await fetch(`${BASE}/metrics?detailed=true`);
+    const data = await res.json();
+    expect(data.peers).toBeDefined();
+    expect(Array.isArray(data.peers)).toBe(true);
+  });
+
+  test("metrics reflect message activity", async () => {
+    // Register a peer first
+    const regRes = await post("/register", {
+      pid: brokerProc.pid, cwd: "/tmp", git_root: null, tty: null, session_name: "metrics-test", summary: "testing metrics", version: "0.8.0",
+    });
+    const { id } = (await regRes.json()) as { id: string };
+
+    // Send a message
+    await post("/send-message", {
+      from_id: id, to_id: id, text: "metrics test msg", type: "text",
+    });
+
+    const metricsRes = await fetch(`${BASE}/metrics`);
+    const metrics = await metricsRes.json();
+    expect(metrics.messages.total).toBeGreaterThan(0);
+  });
+});
